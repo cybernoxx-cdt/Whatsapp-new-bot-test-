@@ -1,11 +1,12 @@
 {
   "name": "god-voip-md",
   "version": "1.0.0",
-  "description": "GOD VOIP MD - WhatsApp auto call bot with .vcall / .acall. Pair code in logs, session saved in MongoDB.",
+  "description": "GOD VOIP MD - WhatsApp VoIP bot with validated media handling and defensive media security.",
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "security-check": "node --check index.js && node --check media-packs.js && node --check security.js"
   },
   "keywords": [
     "whatsapp",
