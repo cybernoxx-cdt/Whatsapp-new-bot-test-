@@ -1,67 +1,46 @@
 // ============================================================
-//  GOD VOIP MD - config.js
-//  Edit this file to customize your bot.
+// GOD VOIP MD - config.js
+// Secrets are supplied through the runtime environment only.
 // ============================================================
 
 export default {
-    // ---------- Bot identity ----------
     botName: 'GOD VOIP MD',
-    version: '1.0.0',
-    ownerName: 'Savendra',                    // menu / messages වල පෙන්වන නම
+    version: '1.0.1',
+    ownerName: 'Savendra',
     ownerUrl: '',
     repoUrl: '',
 
-    // ---------- Account / Login ----------
-    // Bot number (country code, "+" නැතුව). Session නැති පළමු deploy එකේදී
-    // මේ number එකට PAIR CODE එක logs වල auto පෙන්වනවා.
-    // WhatsApp → Linked Devices → Link with phone number instead → code එක ගහන්න.
+    // WhatsApp number in international format, digits only.
     number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '94707085822',
 
-    // ---------- Database (session save කරන්න) ----------
-    // Pair වුණාට පස්සේ session එක MongoDB එකේ save වෙනවා, restart වුණාම auto login.
-    // MONGODB_URI env var එකක් විදිහට හෝ මෙතන paste කරන්න.
+    // Set these in GitHub Actions Secrets. Never commit credentials.
     mongodbUri: process.env.MONGODB_URI || '',
-    sessionKey: process.env.SESSION_KEY || 'god-voip-md',   // MongoDB එකේ session නම
+    sessionKey: process.env.SESSION_KEY || 'god-voip-md',
 
-    // ---------- SESSION ID (optional) ----------
-    // මෙතනට දාන්න පුළුවන්: Base64 session | creds.json content | MEGA link
-    // (prefix එකක් තිබුණත් කමක් නෑ, උදා: NAME=eyJ...)
-    // දාලා තියෙනවා නම් pair code එකක් නැතුව කෙලින්ම ඒ session එකෙන් connect වෙලා වැඩ කරනවා.
-    // හිස් නම් MongoDB session එක / pair code පාවිච්චි වෙනවා.
+    // SESSION_ID must be a complete supported export (Base64 JSON,
+    // creds.json JSON, full auth-state JSON map, or supported MEGA link).
+    // A short pairing-code fragment such as "shavi&" is NOT a session.
     sessionId: process.env.SESSION_ID || '',
 
-    // Extra owners (optional)
     owners: process.env.OWNER_NUMBER ? [process.env.OWNER_NUMBER] : [],
-
-    // Web server (Heroku / health check සඳහා විතරයි)
     port: process.env.PORT || 8000,
-
-    // ---------- Commands ----------
     prefix: process.env.PREFIX || '.',
-
-    // false = owner විතරයි commands use කරන්න පුළුවන්
     publicCommands: false,
 
-    // ---------- Media played on calls ----------
-    // Direct links (audio: .opus/.mp3/.ogg - video: .mp4)
     audioUrl: 'https://file.dnuz.top/suv5il.ogg',
     videoUrl: 'https://github.com/ubala-siya/file-storage-repo-2/raw/refs/heads/main/uploads/1793198989389-anonymous-7fryx6_IUNFvliL.mp4',
 
-    // ---------- Texts ----------
     texts: {
         fail: '⚠️ Call system එක busy. නැවත උත්සාහ කරන්න.',
         ownerOnly: '🔒 මේ command එක owner ට විතරයි.',
         footer: '> ✦ GOD VOIP MD',
     },
 
-    // ---------- Voip options ----------
     voip: {
-        logLevel: 'media',   // 'media' = video/relay logs pennanawa (problem ekak nathnam 'warn' karanna)
+        logLevel: 'media',
         maxConcurrentCalls: 3,
-        callResolution: '480p',     // .vcall video call quality
+        callResolution: '480p',
     },
 
-    // Auto answer (incoming call → media play) පළමු start එකේදී ON ද OFF ද
-    // (පස්සේ .call on / .call off වලින් වෙනස් කළාම ./data/settings.json එකේ save වෙනවා)
     autoCallDefault: true,
 };
