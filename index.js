@@ -17,53 +17,52 @@ import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
 import { getPackMedia, restoreMediaFromGridFS } from './media-packs.js';
 
-// ---- Bounded, deduplicated logs: prevent repeated crypto/library noise filling CI logs ----
-const _log = console.log.bind(console);
-const _warn = console.warn.bind(console);
-const _error = console.error.bind(console);
+// ---- Safe, concise logging: never print Signal ratchet/session objects ----
+const _rawLog = console.log.bind(console);
+const _rawWarn = console.warn.bind(console);
+const _rawError = console.error.bind(console);
 const _logSeen = new Map();
-function _shouldPrint(args) {
-    const line = args.map(v => typeof v === 'string' ? v : (v?.message || '')).join(' ');
-    // Bad MAC is a per-message decrypt failure from stale/rotated Signal sessions.
-    // Keep one concise diagnostic per 10 minutes, never dump repeated stacks.
-    // Baileys Signal ratchet diagnostics can include full SessionEntry objects
-    // (private key material and buffers). Never print those internals to CI logs.
-    const key = /Closing open session in favor of incoming prekey bundle|Closing session:\s*SessionEntry/i.test(line)
-        ? 'signal-ratchet'
-        : /Bad MAC|Failed to decrypt message with any known session/i.test(line)
-            ? 'baileys-bad-mac'
-            : /Session saved to MongoDB/i.test(line) ? 'session-saved'
-            : null;
-    if (!key) return true;
-    const now = Date.now(), last = _logSeen.get(key) || 0;
-    const interval = key === 'session-saved' ? 300000 : 600000;
-    if (now - last < interval) return false;
-    _logSeen.set(key, now);
-    if (key === 'baileys-bad-mac') {
-        _log('⚠️ [SECURITY] Message decrypt warning (Bad MAC). Repeated diagnostics hidden; verify the linked-device session if message decryption keeps failing.');
-        return false;
-    }
-    if (key === 'signal-ratchet') {
-        _log('🔐 [SECURITY] WhatsApp encryption session refreshed. Internal key details hidden.');
-        return false;
-    }
-    if (key === 'session-saved') {
-        _log('💾 [DATABASE] WhatsApp session backup updated.');
-        return false;
-    }
-    return false;
-}
-console.log = (...a) => { if (_shouldPrint(a)) _log(...a); };
-console.warn = (...a) => { if (_shouldPrint(a)) _warn(...a); };
-console.error = (...a) => { if (_shouldPrint(a)) _error(...a); };
 
-// ---- GitHub Actions: logs වල phone numbers hide කරනවා ----
-if (process.env.GITHUB_ACTIONS) {
-    const orig = console.log;
-    console.log = (...a) => orig(...a.map(x => typeof x === 'string'
-        ? x.replace(/\d{9,15}(?=[:@\s|)])/g, n => n.slice(0, 3) + 'xxxxxx' + n.slice(-2))
-        : x));
+function safeLog(level, args) {
+    const first = args.find(v => typeof v === 'string') || '';
+    const joined = args.map(v => typeof v === 'string' ? v : '').join(' ');
+    const ratchetDump = /Closing session:\s*SessionEntry|Closing open session in favor of incoming prekey bundle/i.test(joined)
+        || ( /Closing session:/i.test(first) && args.some(v => v && typeof v === 'object') );
+    if (ratchetDump) {
+        const key = 'signal-ratchet';
+        const now = Date.now();
+        if (now - (_logSeen.get(key) || 0) > 600000) {
+            _logSeen.set(key, now);
+            _rawWarn('🔐 [SECURITY] WhatsApp encryption session updated. Sensitive session data suppressed.');
+        }
+        return;
+    }
+
+    const badMac = /Bad MAC|Failed to decrypt message with any known session/i.test(joined);
+    if (badMac) {
+        const key = 'bad-mac', now = Date.now();
+        if (now - (_logSeen.get(key) || 0) > 600000) {
+            _logSeen.set(key, now);
+            _rawWarn('⚠️ [SECURITY] A message could not be decrypted. Check linked-device session if this repeats.');
+        }
+        return;
+    }
+
+    const safeArgs = args.map(value => {
+        if (value instanceof Error) return value.message;
+        if (value && typeof value === 'object') return '[object details suppressed]';
+        if (typeof value === 'string') {
+            let out = value.replace(/\b\d{9,15}(?=[:@\s|)])/g, n => n.slice(0, 3) + 'xxxxxx' + n.slice(-2));
+            if (process.env.GITHUB_ACTIONS) out = out.replace(/(mongodb(?:\+srv)?:\/\/)[^\s]+/gi, '$1[REDACTED]');
+            return out;
+        }
+        return value;
+    });
+    (level === 'error' ? _rawError : level === 'warn' ? _rawWarn : _rawLog)(...safeArgs);
 }
+console.log = (...args) => safeLog('log', args);
+console.warn = (...args) => safeLog('warn', args);
+console.error = (...args) => safeLog('error', args);
 
 // ================= SETTINGS =================
 const { prefix, texts } = config;
