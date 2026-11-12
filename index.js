@@ -33,6 +33,7 @@ const MONGODB_URI = config.mongodbUri;
 const SESSION_KEY = config.sessionKey;
 const AUDIO_URL = config.audioUrl;
 const VIDEO_URL = config.videoUrl;
+console.log('🧩 BUILD v4 | autoDowngrade:off | auto-hangup | answerIncoming | media-log');
 
 // ================= BAILEYS EXPORTS =================
 const pick = (name) => B[name] ?? B.default?.[name] ?? B.default?.default?.[name];
@@ -269,6 +270,13 @@ function mediaDurationMs(file) {
 //  - autoEndCall:true, loop:false → hang up when the media finishes (no repeating)
 const CALL_OPTS = { autoEndCall: true, loop: false, autoDowngrade: false };
 
+// Logs the whole life of a call so we can see exactly where video stops (send these lines when reporting a problem)
+function watchCall(call, label) {
+    for (const ev of ['ringing', 'connected', 'item', 'peer_video', 'downgraded', 'playlist_ended', 'playlist_looped', 'audio_finished']) {
+        call.on(ev, (info) => console.log(`🔎 [${label}] ${ev}`, info !== undefined ? JSON.stringify(info) : ''));
+    }
+}
+
 // Make sure the call really ends when the media is over (library has no end-timer for video + loops audio).
 // startNow=true for incoming calls (already connected); otherwise the timer starts when the other side answers.
 async function armAutoHangup(call, file, label, startNow = false) {
@@ -501,6 +509,7 @@ async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
         console.log('✅ Call accepted:', callId);
         call.on('error', (e) => console.log('Incoming call error:', e?.message ?? e));
         call.on('ended', (r) => { console.log('📴 Incoming call ended:', r ?? ''); setTimeout(() => handled.delete(callId), 60000); });
+        watchCall(call, 'incoming');
         armAutoHangup(call, prepared.file, 'incoming', true).catch(() => {});
     } catch (e) {
         console.log('❌ Accept error:', e.message);
@@ -630,6 +639,7 @@ async function dialOut(kind, number, url) {
     } finally {
         setTimeout(() => { manualDialing = Math.max(0, manualDialing - 1); }, 15000);
     }
+    watchCall(call, `manual ${kind}`);
     armAutoHangup(call, prepared.file, `manual ${kind}`).catch(() => {});
     call.on('error', (e) => console.log(`Manual ${kind} call error:`, e?.message ?? e));
     call.on('ended', (r) => console.log(`📴 Manual ${kind} call ended:`, r ?? ''));
