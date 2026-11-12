@@ -889,7 +889,7 @@ async function handleCommand(sock, m) {
             args: rawArgs,
             text: rawArgs.join(' '),
             reply,
-            state: { callOn: CALL_ON, pluginCount: PLUGIN_LIST.length, plugins: PLUGIN_LIST },
+            state: { callOn: CALL_ON, pluginCount: PLUGIN_LIST.length, plugins: PLUGIN_LIST, dbConnected: dbOn() },
         };
         try {
             await plugin.run(ctx);
