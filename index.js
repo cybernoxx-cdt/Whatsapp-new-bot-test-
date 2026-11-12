@@ -1,6 +1,6 @@
 // ============================================================
 //  GOD VOIP MD
-//  Session config.js එකෙන් • Auto call + .vcall / .acall
+//  Pair code (logs) → session MongoDB එකේ save • Auto call + .vcall / .acall
 // ============================================================
 
 import * as B from '@dnuzi/baileys';
@@ -8,11 +8,12 @@ import Voip from '@dnuzi/baileys/voip';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import mongoose from 'mongoose';
 import express from 'express';
 import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
-import { loadSession } from './session.js';
+import { loadSession, sessionHash } from './session.js';
 
 // ---- GitHub Actions: logs වල phone numbers hide කරනවා ----
 if (process.env.GITHUB_ACTIONS) {
@@ -27,6 +28,8 @@ const { prefix, texts } = config;
 const clean = (n) => String(n).replace(/[^0-9]/g, '');
 const NUMBER = clean(config.number);
 const OWNERS = [NUMBER, ...config.owners.map(clean)];
+const MONGODB_URI = config.mongodbUri;
+const SESSION_KEY = config.sessionKey;
 const AUDIO_URL = config.audioUrl;
 const VIDEO_URL = config.videoUrl;
 
@@ -107,13 +110,22 @@ ${CALL_ON
 
 ${texts.footer}`;
 
-// ================= SETTINGS (ON/OFF) - ./data/settings.json =================
+// ================= SETTINGS (ON/OFF) =================
+// MongoDB තියෙනවා නම් එහි save වෙනවා, නැත්නම් ./data/settings.json
+const Setting = mongoose.model('Setting', new mongoose.Schema({
+    key: { type: String, unique: true },
+    value: mongoose.Schema.Types.Mixed,
+}));
 const SETTINGS_FILE = './data/settings.json';
+const dbOn = () => mongoose.connection.readyState === 1;
 let CALL_ON = config.autoCallDefault;
 
-function loadSettings() {
+async function loadSettings() {
     try {
-        if (fs.existsSync(SETTINGS_FILE)) {
+        if (dbOn()) {
+            const st = await Setting.findOne({ key: 'autoCall' });
+            if (st) CALL_ON = !!st.value;
+        } else if (fs.existsSync(SETTINGS_FILE)) {
             const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
             if (typeof j.autoCall === 'boolean') CALL_ON = j.autoCall;
         }
@@ -121,11 +133,15 @@ function loadSettings() {
     console.log('📞 Auto call:', CALL_ON ? 'ON' : 'OFF');
 }
 
-function setCallOn(v) {
+async function setCallOn(v) {
     CALL_ON = v;
     try {
-        fs.mkdirSync('./data', { recursive: true });
-        fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ autoCall: v }));
+        if (dbOn()) {
+            await Setting.findOneAndUpdate({ key: 'autoCall' }, { value: v }, { upsert: true });
+        } else {
+            fs.mkdirSync('./data', { recursive: true });
+            fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ autoCall: v }));
+        }
     } catch (e) { console.log('Settings save error:', e.message); }
 }
 
@@ -298,6 +314,55 @@ async function playVideoOnCall(voip, callId, url) {
 
 // ================= SESSION =================
 const SESSION_DIR = './session';
+const SESSION_SRC = './session.src';
+const Session = mongoose.model('Session', new mongoose.Schema({
+    sessionId: { type: String, unique: true },
+    data: { type: Object, default: {} },
+    src: { type: String, default: '' },   // config sessionId එකේ hash (වෙනස් වුණාද බලන්න)
+}, { minimize: false }));
+let CURRENT_SRC = '';
+
+async function getSavedSession() {
+    if (!dbOn()) return null;
+    const st = await Session.findOne({ sessionId: SESSION_KEY });
+    return st && st.data?.['creds.json'] ? st : null;
+}
+
+async function restoreSession(st) {
+    if (!st) return false;
+    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+    fs.mkdirSync(SESSION_DIR, { recursive: true });
+    for (const f in st.data) fs.writeFileSync(path.join(SESSION_DIR, f), st.data[f]);
+    console.log('✅ Session restored from MongoDB');
+    return true;
+}
+
+async function saveSession() {
+    if (!dbOn()) return;
+    try {
+        if (!fs.existsSync(SESSION_DIR)) return;
+        const data = {};
+        for (const f of fs.readdirSync(SESSION_DIR)) {
+            data[f] = fs.readFileSync(path.join(SESSION_DIR, f), 'utf-8');
+        }
+        await Session.findOneAndUpdate({ sessionId: SESSION_KEY }, { data, src: CURRENT_SRC }, { upsert: true });
+        console.log('💾 Session saved to MongoDB');
+    } catch (e) {
+        console.log('Session save error:', e.message);
+    }
+}
+
+let saveTimer;
+const debouncedSave = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveSession, 5000);
+};
+
+async function wipeSession() {
+    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+    fs.rmSync(SESSION_SRC, { force: true });
+    if (dbOn()) await Session.deleteOne({ sessionId: SESSION_KEY }).catch(() => {});
+}
 
 // ================= VOIP =================
 const handled = new Set();      // calls already played / playing (prevents duplicates)
@@ -570,9 +635,9 @@ async function handleCommand(sock, m) {
     }
 
     if (isCall) {
-        if (arg === 'on') setCallOn(true);
+        if (arg === 'on') await setCallOn(true);
         if (arg === 'off') {
-            setCallOn(false);
+            await setCallOn(false);
             pendingOut.clear();
         }
         await reply(STATUS_TEXT());
@@ -600,6 +665,10 @@ function startServer() {
 }
 
 // ================= START =================
+let pairRequested = false;
+let pairAttempts = 0;
+const MAX_PAIR_CODES = 6;
+
 async function start() {
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
@@ -616,7 +685,26 @@ async function start() {
         },
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    // Session නැත්නම් config.js එකේ number එකට pair code එක logs වල පෙන්වනවා
+    if (!sock.authState.creds.registered && !pairRequested) {
+        pairRequested = true;
+        pairAttempts++;
+        await sleep(3000);
+        try {
+            const code = await sock.requestPairingCode(NUMBER);
+            const pretty = code?.match(/.{1,4}/g)?.join('-') || code;
+            console.log('\n🔑 PAIRING CODE: ' + pretty);
+            console.log('→ WhatsApp → Linked Devices → Link a device → Link with phone number instead\n');
+        } catch (e) {
+            pairRequested = false;
+            console.log('Pairing code error:', e.message);
+        }
+    }
+
+    sock.ev.on('creds.update', async () => {
+        await saveCreds();
+        debouncedSave();
+    });
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
@@ -629,17 +717,12 @@ async function start() {
     });
 
     let voipReady = false;
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        // QR එකක් ඉල්ලනවා කියන්නේ session එක invalid. QR / pair code කිසිවිටක් print කරන්නේ නෑ.
-        if (qr) {
-            console.log('❌ Session එක invalid හෝ expire වෙලා. අලුත් SESSION ID එකක් config.js එකේ දාන්න.');
-            fs.rmSync(SESSION_DIR, { recursive: true, force: true });
-            fs.rmSync('./session.src', { force: true });
-            process.exit(1);
-        }
-
+    sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
         if (connection === 'open') {
+            pairRequested = false;
+            pairAttempts = 0;
             console.log('✅ Connected: ' + sock.user?.id);
+            await saveSession();
             if (!voipReady) {
                 voipReady = true;
                 try { await setupVoip(sock); }
@@ -652,10 +735,17 @@ async function start() {
             voipReady = false;
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === DisconnectReason.loggedOut) {
-                console.log('❌ Logged out. අලුත් SESSION ID එකක් config.js එකේ දාන්න.');
-                fs.rmSync(SESSION_DIR, { recursive: true, force: true });
-                fs.rmSync('./session.src', { force: true });
+                console.log('❌ Logged out. Session delete කළා - bot එක restart කළාම අලුත් pair code එකක් එයි.');
+                await wipeSession();
                 process.exit(1);
+            }
+            // pair කරන්න කලින් code එක expire වුණොත් අලුත් එකක් (උපරිම ${MAX_PAIR_CODES} වතාවක්)
+            if (!sock.authState.creds.registered) {
+                pairRequested = false;
+                if (pairAttempts >= MAX_PAIR_CODES) {
+                    console.log('❌ Pair code ' + MAX_PAIR_CODES + ' වතාවක් expire වුණා. Bot එක restart කරලා නැවත try කරන්න.');
+                    process.exit(1);
+                }
             }
             console.log('🔄 Reconnecting...');
             setTimeout(start, 3000);
@@ -667,13 +757,50 @@ process.on('uncaughtException', (e) => console.log('Uncaught exception:', e?.mes
 process.on('unhandledRejection', (e) => console.log('Unhandled rejection:', e?.message ?? e));
 
 console.log(`🚀 ${config.botName} v${config.version}`);
-try {
-    await loadSession(config.sessionId, config.sessionApi);
-} catch (e) {
-    console.log('❌ Session error:', e.message);
+
+if (!MONGODB_URI) {
+    console.log(config.sessionId
+        ? 'ℹ️ MONGODB_URI නෑ - config sessionId එකෙන් පමණක් login වෙනවා.'
+        : '⚠️ MONGODB_URI නෑ - session save වෙන්නේ නෑ (restart වුණාම නැවත pair කරන්න වෙයි). config.js එකේ mongodbUri දාන්න.');
+} else {
+    try {
+        await mongoose.connect(MONGODB_URI);
+        console.log('✅ MongoDB connected');
+    } catch (e) {
+        console.log('❌ MongoDB connect error:', e.message);
+        process.exit(1);
+    }
+}
+
+if (NUMBER.length < 8) {
+    console.log('❌ config.js එකේ number එක දාන්න (country code එක්ක, "+" නැතුව).');
     process.exit(1);
 }
-loadSettings();
+
+// Login order:
+//  1) config.js sessionId (අලුත් එකක් නම්) → කෙලින්ම ඒකෙන් connect
+//  2) MongoDB එකේ save කරපු session
+//  3) pair code (logs වල)
+const wantedSrc = sessionHash(config.sessionId);
+const saved = await getSavedSession();
+let haveSession = false;
+
+if (config.sessionId && (!saved || saved.src !== wantedSrc)) {
+    try {
+        await loadSession(config.sessionId);
+        CURRENT_SRC = wantedSrc;
+        haveSession = true;
+    } catch (e) {
+        console.log('⚠️ config sessionId පාවිච්චි කරන්න බැරි වුණා:', e.message);
+    }
+}
+if (!haveSession && saved) {
+    haveSession = await restoreSession(saved);
+    if (haveSession) CURRENT_SRC = saved.src || '';
+}
+if (!haveSession) console.log('ℹ️ Session නෑ → pair code එකක් හදනවා...');
+
+await loadSettings();
 await loadPlugins();
 startServer();
 start();
