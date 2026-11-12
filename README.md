@@ -19,7 +19,7 @@ Reply to a WhatsApp video/audio with:
 - `.addpack vibe` — upload to the media URL service and save the returned URL and metadata in the existing MongoDB database.
 - `.mypack` — list packs.
 - `.mypack vibe` — list assets in a pack.
-- `.tourl` — upload replied media into the `uploads` pack.
+- `.tourl` — upload replied image/video/audio/document through the DNUZ `/api/presign` → signed `PUT` → `/api/complete` flow and return the public URL only. It will not fall back to a private `gridfs://` link.
 - `.vcall vibe 947XXXXXXXX` — call using the latest video in the pack.
 - `.acall vibe 947XXXXXXXX` — call using the latest audio in the pack.
 
@@ -27,7 +27,7 @@ Existing direct URL forms remain supported:
 - `.vcall 947XXXXXXXX https://example.com/video.mp4`
 - `.acall 947XXXXXXXX https://example.com/audio.mp3`
 
-Uploads use `expires: 0`; permanent availability still depends on the upload provider's retention policy. The media metadata is stored in the existing MongoDB database's `media_assets` collection. This code does not create a new database per media pack.
+Uploads use `expires: 0`; permanent availability still depends on the upload provider's retention policy. Set `TOURL_API_KEY` in GitHub Actions Secrets (never paste it into source code). The bot verifies that the returned URL is anonymously downloadable before saving it. The media metadata is stored in the existing MongoDB database's `media_assets` collection. This code does not create a new database per media pack.
 
 ## MongoDB quota note
 The app uses one database named in `MONGODB_URI` and named collections (`sessions`, `settings`, `media_assets`). If the MongoDB host account itself has reached its database quota, an administrator must free capacity or raise that provider limit; application code cannot override a server-side quota.
