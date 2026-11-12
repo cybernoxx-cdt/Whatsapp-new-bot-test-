@@ -50,14 +50,63 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
   });
   if (!putResponse.ok) throw new Error('Media upload failed: HTTP ' + putResponse.status);
 
-  // Optional library registration: a successful PUT already gives the host URL.
-  fetch(base + '/api/complete', {
-    method: 'POST', headers,
-    body: JSON.stringify({ key: presign.key, name: filename, expires }),
-    signal: timeout()
-  }).catch(error => console.warn('[TOURL] Optional completion request failed:', error.message));
+  // Finalize the object before publishing its URL. Some hosts return a URL
+  // at presign time, but keep it private/unavailable until /complete succeeds.
+  let completed = null;
+  let completionError = null;
+  try {
+    const completeResponse = await fetch(base + '/api/complete', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ key: presign.key, name: filename, expires }),
+      signal: timeout()
+    });
+    const completeText = await completeResponse.text();
+    try { completed = completeText ? JSON.parse(completeText) : {}; } catch { completed = {}; }
+    if (!completeResponse.ok) {
+      completionError = completed?.error || `HTTP ${completeResponse.status}`;
+    }
+  } catch (error) {
+    completionError = error.message;
+  }
 
-  return { url: presign.url, key: presign.key };
+  // Prefer a canonical public URL returned by completion; otherwise use the
+  // exact URL from presign. Never rewrite or reconstruct a host-issued URL.
+  const publicUrl = completed?.url || completed?.publicUrl || completed?.public_url || presign.url;
+  if (!/^https:\\/\\//i.test(String(publicUrl || ''))) {
+    throw new Error('Upload host did not return a valid public HTTPS media URL.');
+  }
+
+  // Verify anonymous GET access before saving the URL in MongoDB. A successful
+  // PUT only proves storage upload; it does not prove the object is publicly
+  // readable by the call runner.
+  let lastStatus = 'no response';
+  let isPublic = false;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      const check = await fetch(publicUrl, {
+        method: 'GET',
+        redirect: 'follow',
+        headers: { 'User-Agent': 'GOD-VOIP-MD/1.0', Range: 'bytes=0-0' },
+        signal: timeout()
+      });
+      lastStatus = `HTTP ${check.status}`;
+      const contentType = (check.headers.get('content-type') || '').toLowerCase();
+      isPublic = check.ok && !contentType.includes('text/html');
+      try { await check.body?.cancel(); } catch {}
+      if (isPublic) break;
+    } catch (error) {
+      lastStatus = error.message;
+    }
+    if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+  }
+
+  if (!isPublic) {
+    const detail = completionError ? `; completion: ${completionError}` : '';
+    throw new Error(`DNUZ upload finished but its URL is not publicly readable (${lastStatus})${detail}. Check the DNUZ API key, public-file permission and host status; no broken URL was saved.`);
+  }
+
+  return { url: publicUrl, key: presign.key };
 }
 
 export async function saveMediaAsset({ owner, pack, kind, name, mime, size, url, storageKey }) {
