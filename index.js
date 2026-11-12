@@ -552,30 +552,27 @@ const pendingOut = new Map();   // outgoing calls waiting for the other side to 
 let VOIP = null;                // current Voip instance (set after connect)
 let manualDialing = 0;          // .vcall / .acall වලින් යවන calls auto-handler එකෙන් ignore කරන්න
 
-async function runPlayback(voip, sock, callId, isVideo, replyJid) {
+async function runPlayback(voip, sock, callId, isVideo, replyJid, mediaUrl) {
     if (handled.has(callId)) return;
     handled.add(callId);
+    console.log('▶️ Peer answered; starting call media:', callId);
     try {
         let played = false;
         if (isVideo) {
-            played = await playVideoOnCall(voip, callId, VIDEO_URL).catch(e => {
+            played = await playVideoOnCall(voip, callId, mediaUrl).catch(e => {
                 console.log('video play error:', e.message);
                 return false;
             });
         }
         if (isVideo && !played) console.log('⚠️ video failed → falling back to audio');
         if (!played) {
-            played = await playAudioOnCall(voip, callId, AUDIO_URL).catch(e => {
+            played = await playAudioOnCall(voip, callId, mediaUrl).catch(e => {
                 console.log('play error:', e.message);
                 return false;
             });
         }
-        if (!played) {
-            // fallback: use the sound of the video file if the audio file failed
-            played = await playAudioOnCall(voip, callId, VIDEO_URL).catch(() => false);
-        }
-        if (!played) {
-            try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n\n${texts.footer}` }); } catch {}
+        if (!played && sock && replyJid) {
+            try { await sock.sendMessage(replyJid, { text: `${texts.fail}\\n\\n${texts.footer}` }); } catch {}
         }
         await sleep(1500);
         await voip.hangup(callId).catch(() => {});
@@ -659,7 +656,7 @@ async function setupVoip(sock) {
         const isVideo = call.video === true || call.isVideo === true ||
             /video/i.test(String(call.mediaType ?? call.media ?? call.type ?? ''));
         const outgoing = String(call.direction || '').toLowerCase().includes('out');
-        if (outgoing && manualDialing > 0) return; // .vcall / .acall call එකක්
+        // Manual outgoing calls must still be tracked until the peer answers.
 
         if (!CALL_ON) {
             console.log('⏸️ auto call OFF → ignore:', from);
@@ -670,7 +667,7 @@ async function setupVoip(sock) {
         console.log('mediaType:', call.mediaType, '| keys:', Object.keys(call).join(','));
 
         if (outgoing) {
-            pendingOut.set(callId, { isVideo, replyJid });
+            pendingOut.set(callId, { isVideo, replyJid, mediaUrl: null });
             return;
         }
 
@@ -680,10 +677,10 @@ async function setupVoip(sock) {
     const onAnswered = (c, raw) => {
         const id = c?.callId ?? c?.call?.callId;
         const info = pendingOut.get(id);
-        if (!CALL_ON || !info) return;
+        if (!info) return;
         console.log('📲 Answered by peer:', id, raw ? '(' + raw.slice(0, 80) + ')' : '');
         pendingOut.delete(id);
-        runPlayback(voip, sock, id, info.isVideo, info.replyJid);
+        runPlayback(voip, sock, id, info.isVideo, info.replyJid, info.mediaUrl || (info.isVideo ? VIDEO_URL : AUDIO_URL));
     };
 
     voip.on('call_state', (c) => {
@@ -747,10 +744,22 @@ async function dialOut(kind, number, url) {
     } finally {
         setTimeout(() => { manualDialing = Math.max(0, manualDialing - 1); }, 15000);
     }
+    const callId = call?.callId ?? call?.id;
+    if (!callId) throw new Error('VOIP.call() did not return a callId; check signaling logs.');
+    pendingOut.set(callId, { isVideo: kind === 'video', replyJid: null, mediaUrl: src });
     watchCall(call, `manual ${kind}`);
-    armAutoHangup(call, prepared.file, `manual ${kind}`).catch(() => {});
+    call.on('connected', () => {
+        const info = pendingOut.get(callId);
+        if (!info) return;
+        pendingOut.delete(callId);
+        runPlayback(VOIP, null, callId, info.isVideo, null, info.mediaUrl)
+            .catch(e => console.log('Manual playback error:', e?.message ?? e));
+    });
     call.on('error', (e) => console.log(`Manual ${kind} call error:`, e?.message ?? e));
-    call.on('ended', (r) => console.log(`📴 Manual ${kind} call ended:`, r ?? ''));
+    call.on('ended', (r) => {
+        pendingOut.delete(callId);
+        console.log(`📴 Manual ${kind} call ended:`, r ?? '');
+    });
     return call;
 }
 
