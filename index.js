@@ -210,32 +210,17 @@ async function downloadFile(url, file) {
 
     let lastErr;
     for (const candidate of [...new Set(candidates)]) {
-        // Some object hosts reject browser-like User-Agent/Accept headers even
-        // for public objects. Try the normal request first, then a bare GET.
-        const requestProfiles = [
-            { 'User-Agent': UA, Accept: 'video/mp4,audio/*,application/octet-stream,*/*' },
-            { Accept: '*/*' },
-            {},
-        ];
-        for (const headers of requestProfiles) {
-          for (let attempt = 1; attempt <= 2; attempt++) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
             let response;
             try {
                 response = await fetch(candidate, {
                     redirect: 'follow',
-                    headers,
+                    headers: { 'User-Agent': UA, Accept: 'video/mp4,audio/*,application/octet-stream,*/*' },
                     signal: AbortSignal.timeout(60000),
                 });
 
                 if ([401, 403, 404, 410].includes(response.status)) {
-                    const status = response.status;
-                    try { await response.body?.cancel(); } catch {}
-                    // Try alternate request headers before declaring the URL private.
-                    if (headers !== requestProfiles[requestProfiles.length - 1]) {
-                        lastErr = Object.assign(new Error(`HTTP ${status} - host rejected request profile`), { permanent: true });
-                        break;
-                    }
-                    throw Object.assign(new Error(`HTTP ${status} - media host denied public access`), { permanent: true });
+                    throw Object.assign(new Error(`HTTP ${response.status} - media host denied access or the link is unavailable`), { permanent: true });
                 }
                 if (!response.ok) {
                     throw new Error('HTTP ' + response.status);
@@ -261,12 +246,11 @@ async function downloadFile(url, file) {
                 if (permanent) {
                     throw new Error(`Media URL is not publicly downloadable (${e.message}). Reply to the media and run .tourl (or .addpack packname), then run .vcall NUMBER without a URL.`);
                 }
-                if (attempt < 2) await sleep(1000 * attempt);
+                if (attempt < 3) await sleep(1200 * attempt);
             }
-          }
         }
     }
-    throw new Error('Media download failed after alternate public GET attempts: ' + (lastErr?.message || 'unknown error'));
+    throw new Error('Media download failed after temporary network retries: ' + (lastErr?.message || 'unknown error'));
 }
 
 async function getPcm(url) {

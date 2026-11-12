@@ -37,32 +37,14 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
     signal: timeout()
   });
   const presignText = await presignResponse.text();
-  let presignBody;
-  try { presignBody = JSON.parse(presignText); } catch { throw new Error('Upload host returned invalid presign JSON.'); }
-  const unwrap = (value) => {
-    let current = value;
-    for (let i = 0; i < 4 && current && typeof current === 'object'; i++) {
-      const nested = current.data || current.result || current.file;
-      if (!nested || typeof nested !== 'object') break;
-      current = nested;
-    }
-    return current || {};
-  };
-  const presign = unwrap(presignBody);
-  if (!presignResponse.ok) throw new Error(presignBody.error || presign.error || 'Presign failed: HTTP ' + presignResponse.status);
+  let presign;
+  try { presign = JSON.parse(presignText); } catch { throw new Error('Upload host returned invalid presign JSON.'); }
+  if (!presignResponse.ok) throw new Error(presign.error || 'Presign failed: HTTP ' + presignResponse.status);
+  if (!presign.uploadUrl || !presign.url || !presign.key) throw new Error(presign.error || 'Upload host did not return uploadUrl, url and key.');
 
-  // Accept documented camelCase and common snake_case response fields.
-  const uploadUrl = presign.uploadUrl || presign.upload_url || presign.signedUrl || presign.signed_url;
-  const presignUrl = presign.url || presign.publicUrl || presign.public_url || presign.downloadUrl || presign.download_url;
-  const objectKey = presign.key || presign.storageKey || presign.storage_key;
-  const uploadContentType = presign.contentType || presign.content_type || type;
-  if (!uploadUrl || !objectKey || !/^https:\/\//i.test(uploadUrl)) {
-    throw new Error(presignBody.error || 'Upload host did not return a valid HTTPS upload URL and object key.');
-  }
-
-  const putResponse = await fetch(uploadUrl, {
+  const putResponse = await fetch(presign.uploadUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': uploadContentType },
+    headers: { 'Content-Type': presign.contentType || type },
     body: buffer,
     signal: timeout()
   });
@@ -70,29 +52,28 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
 
   // Finalize the object before publishing its URL. Some hosts return a URL
   // at presign time, but keep it private/unavailable until /complete succeeds.
-  const completeResponse = await fetch(base + '/api/complete', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ key: objectKey, name: filename, expires }),
-    signal: timeout()
-  });
-  const completeText = await completeResponse.text();
-  let completedBody = {};
-  try { completedBody = completeText ? JSON.parse(completeText) : {}; } catch {
-    if (completeResponse.ok) throw new Error('Upload host returned invalid completion JSON.');
-  }
-  if (!completeResponse.ok) {
-    throw new Error(completedBody.error || `Upload completion failed: HTTP ${completeResponse.status}`);
+  let completed = null;
+  let completionError = null;
+  try {
+    const completeResponse = await fetch(base + '/api/complete', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ key: presign.key, name: filename, expires }),
+      signal: timeout()
+    });
+    const completeText = await completeResponse.text();
+    try { completed = completeText ? JSON.parse(completeText) : {}; } catch { completed = {}; }
+    if (!completeResponse.ok) {
+      completionError = completed?.error || `HTTP ${completeResponse.status}`;
+    }
+  } catch (error) {
+    completionError = error.message;
   }
 
   // Prefer a canonical public URL returned by completion; otherwise use the
-  // exact public URL from presign. Never rewrite or reconstruct host-issued URLs.
-  const completeData = unwrap(completedBody);
-  const publicUrl = completeData.url || completeData.publicUrl || completeData.public_url ||
-    completeData.downloadUrl || completeData.download_url || completeData.fileUrl ||
-    completeData.file_url || completeData.directUrl || completeData.direct_url ||
-    presignUrl;
-  if (!/^https:\/\//i.test(String(publicUrl || ''))) {
+  // exact URL from presign. Never rewrite or reconstruct a host-issued URL.
+  const publicUrl = completed?.url || completed?.publicUrl || completed?.public_url || presign.url;
+  if (!String(publicUrl || '').toLowerCase().startsWith('https://')) {
     throw new Error('Upload host did not return a valid public HTTPS media URL.');
   }
 
@@ -106,13 +87,12 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
       const check = await fetch(publicUrl, {
         method: 'GET',
         redirect: 'follow',
-        headers: { Accept: '*/*' },
+        headers: { 'User-Agent': 'GOD-VOIP-MD/1.0', Range: 'bytes=0-0' },
         signal: timeout()
       });
       lastStatus = `HTTP ${check.status}`;
       const contentType = (check.headers.get('content-type') || '').toLowerCase();
-      isPublic = check.ok && !contentType.includes('text/html') &&
-        !contentType.includes('application/json');
+      isPublic = check.ok && !contentType.includes('text/html');
       try { await check.body?.cancel(); } catch {}
       if (isPublic) break;
     } catch (error) {
@@ -122,10 +102,11 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
   }
 
   if (!isPublic) {
-    throw new Error(`DNUZ upload finished but its URL is not publicly readable (${lastStatus}). The file may be private or the host may deny anonymous downloads. Check the DNUZ API key's public-file permission and host settings; no broken URL was saved.`);
+    const detail = completionError ? `; completion: ${completionError}` : '';
+    throw new Error(`DNUZ upload finished but its URL is not publicly readable (${lastStatus})${detail}. Check the DNUZ API key, public-file permission and host status; no broken URL was saved.`);
   }
 
-  return { url: publicUrl, key: objectKey };
+  return { url: publicUrl, key: presign.key };
 }
 
 export async function saveMediaAsset({ owner, pack, kind, name, mime, size, url, storageKey }) {
