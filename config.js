@@ -28,7 +28,7 @@ export default {
     // (prefix එකක් තිබුණත් කමක් නෑ, උදා: NAME=eyJ...)
     // දාලා තියෙනවා නම් pair code එකක් නැතුව කෙලින්ම ඒ session එකෙන් connect වෙලා වැඩ කරනවා.
     // හිස් නම් MongoDB session එක / pair code පාවිච්චි වෙනවා.
-    sessionId: process.env.SESSION_ID || 'shavi&njhFQDBL#dojZ7WL48DCTDeXVPhLtVBEgtsH4VQCip5IbFeZhIS4',
+    sessionId: process.env.SESSION_ID || 'https://mega.nz/file/njhFQDBL#dojZ7WL48DCTDeXVPhLtVBEgtsH4VQCip5IbFeZhIS4',
 
     // Extra owners (optional)
     owners: process.env.OWNER_NUMBER ? [process.env.OWNER_NUMBER] : [],
