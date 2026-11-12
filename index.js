@@ -15,7 +15,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
-import { getPackMedia } from './media-packs.js';
+import { getPackMedia, restoreMediaFromGridFS } from './media-packs.js';
 
 // ---- Bounded, deduplicated logs: prevent repeated crypto/library noise filling CI logs ----
 const _log = console.log.bind(console);
@@ -258,7 +258,10 @@ async function getPcm(url) {
     fs.mkdirSync('./tmp', { recursive: true });
 
     let file;
-    if (/^https?:\/\//i.test(url)) {
+    if (String(url).startsWith('gridfs://')) {
+        file = './tmp/gridfs_' + crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + '.bin';
+        if (!fs.existsSync(file) || fs.statSync(file).size === 0) await restoreMediaFromGridFS(url, file);
+    } else if (/^https?:\/\//i.test(url)) {
         file = cacheName(url);
         if (!fs.existsSync(file) || fs.statSync(file).size === 0) await downloadFile(url, file);
         console.log('⬇️ ready', fs.statSync(file).size, 'bytes');
@@ -306,7 +309,10 @@ function hasVideoStream(file) {
 async function prepareMedia(url, wantVideo) {
     fs.mkdirSync('./tmp', { recursive: true });
     let file;
-    if (/^https?:\/\//i.test(url)) {
+    if (String(url).startsWith('gridfs://')) {
+        file = './tmp/gridfs_' + crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + '.bin';
+        if (!fs.existsSync(file) || fs.statSync(file).size === 0) await restoreMediaFromGridFS(url, file);
+    } else if (/^https?:\/\//i.test(url)) {
         file = cacheName(url);
         if (!fs.existsSync(file) || fs.statSync(file).size === 0) await downloadFile(url, file);
     } else {
