@@ -15,7 +15,7 @@ export default {
     // Bot number (country code, "+" නැතුව). Session නැති පළමු deploy එකේදී
     // මේ number එකට PAIR CODE එක logs වල auto පෙන්වනවා.
     // WhatsApp → Linked Devices → Link with phone number instead → code එක ගහන්න.
-    number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '',
+    number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '94707085822',
 
     // ---------- Database (session save කරන්න) ----------
     // Pair වුණාට පස්සේ session එක MongoDB එකේ save වෙනවා, restart වුණාම auto login.
