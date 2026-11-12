@@ -7,6 +7,7 @@ on:
   schedule:
     - cron: "0 */5 * * *"
 
+# Prevent two runners from using the same WhatsApp session simultaneously.
 concurrency:
   group: whatsapp-bot-main
   cancel-in-progress: true
@@ -28,7 +29,7 @@ jobs:
           node-version: "22"
 
       - name: Install dependencies
-        run: npm install --omit=dev
+        run: npm install --omit=dev --no-audit --no-fund
 
       - name: Start bot
         env:
@@ -40,6 +41,8 @@ jobs:
           TOURL_API_KEY: ${{ secrets.TOURL_API_KEY }}
           TOURL_BASE_URL: ${{ secrets.TOURL_BASE_URL }}
           PREFIX: ${{ secrets.PREFIX }}
+          # Pairing codes are intentionally not printed to shared CI logs.
+          GITHUB_ACTIONS: "true"
         run: |
-          echo "GOD VOIP MD starting (pairing codes are suppressed in CI logs)"
+          echo "GOD VOIP MD starting"
           node index.js
