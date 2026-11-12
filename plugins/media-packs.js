@@ -71,9 +71,7 @@ async function uploadAndSave(ctx, pack, publicOnly = false) {
     // Always retain a usable local media source in MongoDB. This allows calls
     // to use gridfs:// internally even when the public host returns 403.
     uploaded = await saveMediaToGridFS(buffer, filename, mime);
-    await ctx.reply(publicOnly
-      ? 'ℹ️ External host unavailable. Media saved securely in MongoDB and is ready for calls.'
-      : 'ℹ️ External host unavailable. Media saved securely in MongoDB and is ready for calls.');
+    await ctx.reply('ℹ️ External host unavailable. Media saved securely in MongoDB and is ready for calls.');
     console.warn('[MEDIA] External upload fallback to GridFS:', externalError.message);
   }
   const asset = await saveMediaAsset({
@@ -82,7 +80,7 @@ async function uploadAndSave(ctx, pack, publicOnly = false) {
     kind, name, mime, size: buffer.length,
     url: uploaded.url, storageKey: uploaded.key
   });
-  await ctx.reply('✅ Upload complete\n📦 Pack: ' + pack + '\n🎞️ Type: ' + kind + '\n🔗 ' + asset.url);
+  await ctx.reply('✅ Upload complete\n📦 Pack: ' + pack + '\n🎞️ Type: ' + kind + '\n💾 Storage: ' + (String(asset.url).startsWith('gridfs://') ? 'MongoDB (private)' : 'Public media host') + '\n📞 Ready: .vcall 947XXXXXXXX');
 }
 
 export default {
@@ -101,7 +99,7 @@ export default {
     if (pack) {
       const items = await listPackItems(pack);
       if (!items.length) return ctx.reply('📦 Pack එක හමු වුණේ නැහැ: ' + pack);
-      const lines = items.map((x, i) => (i + 1) + '. ' + x.kind + ' | ' + x.name + '\n' + x.url);
+      const lines = items.map((x, i) => (i + 1) + '. ' + x.kind + ' | ' + x.name + ' | ' + (String(x.url).startsWith('gridfs://') ? 'MongoDB private storage' : 'Public URL'));
       return ctx.reply('📦 *' + pack + '*\n\n' + lines.join('\n\n'));
     }
     const packs = await listPacks();
