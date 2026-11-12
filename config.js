@@ -27,8 +27,8 @@ export default {
     prefix: process.env.PREFIX || '.',
     publicCommands: false,
 
-    audioUrl: 'https://file.dnuz.top/suv5il.ogg',
-    videoUrl: 'https://github.com/ubala-siya/file-storage-repo-2/raw/refs/heads/main/uploads/1793198989389-anonymous-7fryx6_IUNFvliL.mp4',
+    audioUrl: process.env.DEFAULT_AUDIO_URL || '',
+    videoUrl: process.env.DEFAULT_VIDEO_URL || '',
 
     texts: {
         fail: '⚠️ Call system එක busy. නැවත උත්සාහ කරන්න.',
