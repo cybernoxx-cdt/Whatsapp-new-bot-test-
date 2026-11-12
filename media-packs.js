@@ -68,12 +68,18 @@ export async function saveMediaAsset({ owner, pack, kind, name, mime, size, url,
 
 export async function getPackMedia(pack, kind) {
   if (mongoose.connection.readyState !== 1) throw new Error('MongoDB connection is required for URL metadata and media packs.');
-  // Ignore legacy GridFS/internal references. Only host-issued HTTPS URLs are playable.\n  return MediaAsset.findOne({ pack: String(pack).trim().toLowerCase(), kind, url: /^https:\\/\\//i }).sort({ createdAt: -1 }).lean();
+  // Never return legacy gridfs:// or local-storage references to the call engine.
+  return MediaAsset.findOne({
+    pack: String(pack).trim().toLowerCase(),
+    kind,
+    url: { $regex: '^https://', $options: 'i' }
+  }).sort({ createdAt: -1 }).lean();
 }
 
 export async function listPacks() {
   if (mongoose.connection.readyState !== 1) throw new Error('MongoDB connection is required for URL metadata and media packs.');
   return MediaAsset.aggregate([
+    { $match: { url: { $regex: '^https://', $options: 'i' } } },
     { $group: { _id: '$pack', videos: { $sum: { $cond: [{ $eq: ['$kind', 'video'] }, 1, 0] } }, audios: { $sum: { $cond: [{ $eq: ['$kind', 'audio'] }, 1, 0] } }, total: { $sum: 1 } } },
     { $sort: { _id: 1 } }
   ]);
@@ -81,7 +87,10 @@ export async function listPacks() {
 
 export async function listPackItems(pack) {
   if (mongoose.connection.readyState !== 1) throw new Error('MongoDB connection is required for URL metadata and media packs.');
-  return MediaAsset.find({ pack: String(pack).trim().toLowerCase(), url: /^https:\\/\\//i }).sort({ createdAt: -1 }).limit(20).lean();
+  return MediaAsset.find({
+    pack: String(pack).trim().toLowerCase(),
+    url: { $regex: '^https://', $options: 'i' }
+  }).sort({ createdAt: -1 }).limit(20).lean();
 }
 
 export function mediaKindFromMime(mime) {
