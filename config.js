@@ -11,7 +11,7 @@ export default {
     repoUrl: '',
 
     // WhatsApp number in international format, digits only.
-    number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '94707085822',
+    number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '',
 
     // Set these in GitHub Actions Secrets. Never commit credentials.
     mongodbUri: process.env.MONGODB_URI || '',
