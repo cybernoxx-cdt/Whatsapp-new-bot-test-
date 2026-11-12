@@ -68,12 +68,13 @@ async function uploadAndSave(ctx, pack, publicOnly = false) {
     }
     await check.body?.cancel().catch(() => {});
   } catch (externalError) {
-    if (publicOnly) {
-      throw new Error('Public .tourl upload failed: ' + externalError.message +
-        '. Check TOURL_API_KEY / TOURL_BASE_URL and confirm the provider returns a public direct-download URL. No private GridFS URL was returned.');
-    }
+    // Always retain a usable local media source in MongoDB. This allows calls
+    // to use gridfs:// internally even when the public host returns 403.
     uploaded = await saveMediaToGridFS(buffer, filename, mime);
-    await ctx.reply('ℹ️ External media host unavailable; saved in MongoDB instead (internal GridFS URL).');
+    await ctx.reply(publicOnly
+      ? 'ℹ️ Public URL upload failed; media safely saved in MongoDB for calls (internal storage).'
+      : 'ℹ️ External host unavailable; media saved in MongoDB instead (internal storage).');
+    console.warn('[MEDIA] External upload fallback to GridFS:', externalError.message);
   }
   const asset = await saveMediaAsset({
     owner: ctx.m.key.participant || ctx.m.key.remoteJid,
