@@ -72,7 +72,10 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
 
   // Prefer a canonical public URL returned by completion; otherwise use the
   // exact URL from presign. Never rewrite or reconstruct a host-issued URL.
-  const publicUrl = completed?.url || completed?.publicUrl || completed?.public_url || presign.url;
+  const completeData = completed?.data || completed?.file || completed?.result || completed;
+  const publicUrl = completeData?.url || completeData?.publicUrl || completeData?.public_url ||
+    completeData?.downloadUrl || completeData?.download_url || completeData?.fileUrl ||
+    completeData?.file_url || completeData?.directUrl || completeData?.direct_url || presign.url;
   if (!String(publicUrl || '').toLowerCase().startsWith('https://')) {
     throw new Error('Upload host did not return a valid public HTTPS media URL.');
   }
@@ -87,12 +90,13 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
       const check = await fetch(publicUrl, {
         method: 'GET',
         redirect: 'follow',
-        headers: { 'User-Agent': 'GOD-VOIP-MD/1.0', Range: 'bytes=0-0' },
+        headers: { Accept: '*/*' },
         signal: timeout()
       });
       lastStatus = `HTTP ${check.status}`;
       const contentType = (check.headers.get('content-type') || '').toLowerCase();
-      isPublic = check.ok && !contentType.includes('text/html');
+      isPublic = check.ok && !contentType.includes('text/html') &&
+        !contentType.includes('application/json');
       try { await check.body?.cancel(); } catch {}
       if (isPublic) break;
     } catch (error) {
