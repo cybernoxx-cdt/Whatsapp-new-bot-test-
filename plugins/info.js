@@ -27,7 +27,7 @@ export default {
 *📞 Call system*
 ▫️ Auto Call: ${state.callOn ? '🟢 ON' : '🔴 OFF'}
 ▫️ Max concurrent calls: ${config.voip.maxConcurrentCalls}
-▫️ Database: ${dbOk ? '🟢 Connected' : '🔴 Disconnected'}
+▫️ Database: ${state.dbConnected ? '🟢 Connected' : '🔴 Disconnected'}
 
 *🖥️ Server*
 ▫️ Uptime: ${formatUptime(process.uptime())}
