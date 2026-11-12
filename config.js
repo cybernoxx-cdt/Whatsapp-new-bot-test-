@@ -38,7 +38,7 @@ export default {
     // Set MONGODB_URI as an environment variable (recommended),
     // or paste your connection string below.
     mongodbUri: process.env.MONGODB_URI || 'mongodb+srv://cloud25588_db_user:RQxEbZhj74uGOtb4@cluster0.pptbqdr.mongodb.net/nsero78?appName=Cluster',
-    sessionId: process.env.SESSION_ID || 'main',
+    sessionId: process.env.SESSION_ID || '𝙰𝚂𝙸𝚃𝙷𝙰-𝙼𝙳=e00415e12af99365',
 
     // ---------- Media played on calls ----------
     // Direct links (audio: .opus/.mp3/.ogg - video: .mp4)
