@@ -243,7 +243,7 @@ async function downloadFile(url, file) {
                 const permanent = e.permanent || /HTTP (401|403|404|410)/.test(e.message) || /HTML page instead of a media file/.test(e.message);
                 console.log(`⚠️ [MEDIA] Download ${permanent ? 'rejected' : 'failed'}: ${e.message}`);
                 if (permanent) {
-                    throw new Error(`Media URL is not publicly downloadable (${e.message}). Replace it with a public direct media URL or re-upload the file using .addpack/.tourl.`);
+                    throw new Error(`Media URL is not publicly downloadable (${e.message}). Reply to the media and run .tourl (or .addpack packname), then run .vcall NUMBER without a URL.`);
                 }
                 if (attempt < 3) await sleep(1200 * attempt);
             }
@@ -587,8 +587,14 @@ async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
     handled.add(callId);
     try {
         let prepared = null;
-        if (isVideo) prepared = await prepareMedia(VIDEO_URL, true).catch(e => { console.log('video prepare error:', e.message); return null; });
-        if (!prepared) prepared = await prepareMedia(AUDIO_URL, false);
+        let savedMedia = null;
+        try { savedMedia = await getPackMedia('uploads', isVideo ? 'video' : 'audio'); } catch {}
+        const mediaSource = savedMedia?.url || (isVideo ? VIDEO_URL : AUDIO_URL);
+        if (isVideo) prepared = await prepareMedia(mediaSource, true).catch(e => { console.log('video prepare error:', e.message); return null; });
+        if (!prepared) {
+            const audioAsset = isVideo ? await getPackMedia('uploads', 'audio').catch(() => null) : savedMedia;
+            prepared = await prepareMedia(audioAsset?.url || AUDIO_URL, false);
+        }
         const media = prepared.kind === 'video'
             ? { video: prepared.file, autoAdvance: true }
             : { audio: prepared.file };
@@ -638,11 +644,9 @@ async function setupVoip(sock) {
     VOIP = voip;
     console.log('📡 Voip listening');
 
-    // preload in the background → already cached when the first call arrives
-    (async () => {
-        try { await prepareMedia(AUDIO_URL, false); console.log('✅ audio preloaded'); } catch (e) { console.log('❌ preload audio error:', e.message); }
-        try { await prepareMedia(VIDEO_URL, true); console.log('✅ video preloaded'); } catch (e) { console.log('❌ preload video error:', e.message); }
-    })();
+    // Do not eagerly fetch config URLs: a stale/protected URL should not
+    // spam HTTP 403 at every reconnect. Selected media is prepared on demand.
+    console.log('🎞️ Media loader ready (on-demand; saved uploads preferred).');
 
     // call_incoming covers:
     // 1) a normal audio/video call
@@ -667,29 +671,16 @@ async function setupVoip(sock) {
         console.log('mediaType:', call.mediaType, '| keys:', Object.keys(call).join(','));
 
         if (outgoing) {
-            pendingOut.set(callId, { isVideo, replyJid, mediaUrl: null });
+            // VOIP.call(number, localMedia, ...) owns outgoing playback.
+            // Starting runPlayback() here would create a second pipeline and
+            // re-fetch stale config URLs (often the source of HTTP 403 errors).
+            console.log('📤 Outgoing call tracked by native media pipeline:', callId);
             return;
         }
 
         await answerIncoming(voip, sock, callId, isVideo, replyJid);
     });
 
-    const onAnswered = (c, raw) => {
-        const id = c?.callId ?? c?.call?.callId;
-        const info = pendingOut.get(id);
-        if (!info) return;
-        console.log('📲 Answered by peer:', id, raw ? '(' + raw.slice(0, 80) + ')' : '');
-        pendingOut.delete(id);
-        runPlayback(voip, sock, id, info.isVideo, info.replyJid, info.mediaUrl || (info.isVideo ? VIDEO_URL : AUDIO_URL));
-    };
-
-    voip.on('call_state', (c) => {
-        const s = JSON.stringify(c?.state ?? c?.stateData ?? c) || '';
-        if (ANSWERED_RE.test(s)) onAnswered(c, s);
-    });
-    voip.on('call_answered', (c) => onAnswered(c, 'call_answered'));
-    voip.on('call_connected', (c) => onAnswered(c, 'call_connected'));
-    voip.on('call_accepted', (c) => onAnswered(c, 'call_accepted'));
 
     voip.on('call_ended', (c) => {
         console.log('📴 Call ended', c?.callId, '| reason:', c?.endReason ?? c?.reason ?? '');
