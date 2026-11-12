@@ -1,4 +1,4 @@
-name: Run Bot
+name: Run Bot Wha
 
 on:
   workflow_dispatch:
