@@ -165,7 +165,7 @@ async function downloadFile(url, file) {
     for (const u of new Set([url, direct])) {
         for (let i = 1; i <= 3; i++) {
             try {
-                const res = await fetch(u, { redirect: 'follow', headers: { 'User-Agent': UA, Accept: '*/*' } });
+                const res = await fetch(u, { redirect: 'follow', headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(45000) });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
                 return;
@@ -251,6 +251,40 @@ async function prepareMedia(url, wantVideo) {
         console.log('video convert error (using original):', e.message);
     }
     return { file: path.resolve(file), kind: 'video' };
+}
+
+// real duration of a media file in ms (0 if unknown)
+function mediaDurationMs(file) {
+    return new Promise((resolve) => {
+        const p = spawn(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]);
+        let out = '';
+        p.stdout.on('data', d => out += d);
+        p.on('error', () => resolve(0));
+        p.on('close', () => { const n = parseFloat(out); resolve(isNaN(n) ? 0 : Math.ceil(n * 1000)); });
+    });
+}
+
+// Options used for EVERY call we place / answer:
+//  - autoDowngrade:false → never drop to audio just because the other person's camera is off (this was the "sound only" bug)
+//  - autoEndCall:true, loop:false → hang up when the media finishes (no repeating)
+const CALL_OPTS = { autoEndCall: true, loop: false, autoDowngrade: false };
+
+// Make sure the call really ends when the media is over (library has no end-timer for video + loops audio).
+// startNow=true for incoming calls (already connected); otherwise the timer starts when the other side answers.
+async function armAutoHangup(call, file, label, startNow = false) {
+    const ms = await mediaDurationMs(file);
+    if (!ms) return;
+    let timer = null;
+    const start = () => {
+        if (timer) return;
+        timer = setTimeout(() => {
+            console.log(`⏹️ ${label}: media finished → hangup`);
+            call.hangup().catch(() => {});
+        }, ms + 3000);
+    };
+    call.on('connected', start);
+    call.on('ended', () => { if (timer) clearTimeout(timer); });
+    if (startNow) start();
 }
 
 async function playAudioOnCall(voip, callId, url) {
@@ -446,6 +480,47 @@ async function runPlayback(voip, sock, callId, isVideo, replyJid) {
     }
 }
 
+// Answer an incoming call with the library's high-level accept() — same path as dialing out.
+async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
+    if (handled.has(callId)) return;
+    handled.add(callId);
+    try {
+        let prepared = null;
+        if (isVideo) prepared = await prepareMedia(VIDEO_URL, true).catch(e => { console.log('video prepare error:', e.message); return null; });
+        if (!prepared) prepared = await prepareMedia(AUDIO_URL, false);
+        const media = prepared.kind === 'video'
+            ? { video: prepared.file, autoAdvance: true }
+            : { audio: prepared.file };
+        console.log(`📦 answering ${isVideo ? 'video' : 'audio'} call with`, prepared.kind, prepared.file);
+
+        const call = await voip.accept(
+            callId, media,
+            prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
+            CALL_OPTS,
+        );
+        console.log('✅ Call accepted:', callId);
+        call.on('error', (e) => console.log('Incoming call error:', e?.message ?? e));
+        call.on('ended', (r) => { console.log('📴 Incoming call ended:', r ?? ''); setTimeout(() => handled.delete(callId), 60000); });
+        armAutoHangup(call, prepared.file, 'incoming', true).catch(() => {});
+    } catch (e) {
+        console.log('❌ Accept error:', e.message);
+        // if it was never accepted, fall back to the old method once
+        const info = voip.coordinator?.getCall?.(callId);
+        if (info?.canAccept) {
+            handled.delete(callId);
+            try {
+                await voip.acceptCall(callId);
+                console.log('✅ Call accepted (legacy):', callId);
+                await runPlayback(voip, sock, callId, isVideo, replyJid);
+                return;
+            } catch (e2) { console.log('❌ legacy accept error:', e2.message); }
+        }
+        try { await voip.rejectCall(callId); } catch {}
+        try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n\n${texts.footer}` }); } catch {}
+        setTimeout(() => handled.delete(callId), 60000);
+    }
+}
+
 const ANSWERED_RE = /connected|active|answered|in_call|incall|established|accepted/i;
 
 async function setupVoip(sock) {
@@ -457,13 +532,15 @@ async function setupVoip(sock) {
         maxConcurrentCalls: config.voip.maxConcurrentCalls,
     });
 
-    try { await getPcm(AUDIO_URL); } catch (e) { console.log('❌ preload audio error:', e.message); }
-    try { await getPcm(VIDEO_URL); await makeCallVideo(fileCache.get(VIDEO_URL)); }
-    catch (e) { console.log('❌ preload video error:', e.message); }
-
     await voip.listen();
     VOIP = voip;
     console.log('📡 Voip listening');
+
+    // preload in the background → already cached when the first call arrives
+    (async () => {
+        try { await prepareMedia(AUDIO_URL, false); console.log('✅ audio preloaded'); } catch (e) { console.log('❌ preload audio error:', e.message); }
+        try { await prepareMedia(VIDEO_URL, true); console.log('✅ video preloaded'); } catch (e) { console.log('❌ preload video error:', e.message); }
+    })();
 
     // call_incoming covers:
     // 1) a normal audio/video call
@@ -492,15 +569,7 @@ async function setupVoip(sock) {
             return;
         }
 
-        try {
-            await voip.acceptCall(callId);
-            console.log('✅ Call accepted:', callId);
-            await runPlayback(voip, sock, callId, isVideo, replyJid);
-        } catch (e) {
-            console.log('❌ Accept error:', e.message);
-            try { await voip.rejectCall(callId); } catch {}
-            try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n\n${texts.footer}` }); } catch {}
-        }
+        await answerIncoming(voip, sock, callId, isVideo, replyJid);
     });
 
     const onAnswered = (c, raw) => {
@@ -544,8 +613,10 @@ async function dialOut(kind, number, url) {
     // Download + convert ourselves, so the library never guesses "audio" from the URL.
     const prepared = await prepareMedia(src, kind === 'video');
     console.log(`📦 ${kind} call media:`, prepared.kind, prepared.file);
-    // { video: file } forces the library to treat it as VIDEO (sound AND picture)
-    const media = prepared.kind === 'video' ? { video: prepared.file } : { audio: prepared.file };
+    // { video: file } forces VIDEO; autoAdvance makes the library end the call when the video finishes
+    const media = prepared.kind === 'video'
+        ? { video: prepared.file, autoAdvance: true }
+        : { audio: prepared.file };
 
     manualDialing++;
     let call;
@@ -554,11 +625,12 @@ async function dialOut(kind, number, url) {
             number,
             media,
             prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
-            { autoEndCall: true, loop: false },
+            CALL_OPTS,
         );
     } finally {
         setTimeout(() => { manualDialing = Math.max(0, manualDialing - 1); }, 15000);
     }
+    armAutoHangup(call, prepared.file, `manual ${kind}`).catch(() => {});
     call.on('error', (e) => console.log(`Manual ${kind} call error:`, e?.message ?? e));
     call.on('ended', (r) => console.log(`📴 Manual ${kind} call ended:`, r ?? ''));
     return call;
