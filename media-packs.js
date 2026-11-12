@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import path from 'path';
+import fs from 'fs';
+import { Readable } from 'stream';
 
 const schema = new mongoose.Schema({
   owner: { type: String, index: true },
@@ -15,6 +17,27 @@ const schema = new mongoose.Schema({
 }, { collection: 'media_assets', autoIndex: false });
 
 const MediaAsset = mongoose.models.MediaAsset || mongoose.model('MediaAsset', schema);
+function gridBucket() {
+  if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) throw new Error('MongoDB is not connected');
+  return new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'media_files' });
+}
+export async function saveMediaToGridFS(buffer, filename, contentType) {
+  const id = new mongoose.mongo.ObjectId();
+  await new Promise((resolve, reject) => {
+    const stream = gridBucket().openUploadStreamWithId(id, filename, { metadata: { contentType } });
+    stream.once('error', reject); stream.once('finish', resolve); Readable.from(buffer).pipe(stream);
+  });
+  return { url: 'gridfs://' + id.toString(), key: id.toString() };
+}
+export async function restoreMediaFromGridFS(id, destination) {
+  const objectId = new mongoose.mongo.ObjectId(String(id).replace(/^gridfs:\/\//, ''));
+  await new Promise((resolve, reject) => {
+    const chunks = []; const stream = gridBucket().openDownloadStream(objectId);
+    stream.on('data', chunk => chunks.push(chunk));
+    stream.once('error', reject);
+    stream.once('end', () => { try { fs.writeFileSync(destination, Buffer.concat(chunks)); resolve(); } catch (e) { reject(e); } });
+  });
+}
 
 function cleanName(value) {
   return String(value || 'media').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 90) || 'media';
