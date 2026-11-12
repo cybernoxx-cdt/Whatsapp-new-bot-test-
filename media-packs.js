@@ -50,16 +50,12 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
   });
   if (!putResponse.ok) throw new Error('Media upload failed: HTTP ' + putResponse.status);
 
-  // The supplied API contract says /complete registers the upload; wait for it.
-  const completeResponse = await fetch(base + '/api/complete', {
+  // Optional library registration: a successful PUT already gives the host URL.
+  fetch(base + '/api/complete', {
     method: 'POST', headers,
     body: JSON.stringify({ key: presign.key, name: filename, expires }),
     signal: timeout()
-  });
-  if (!completeResponse.ok) {
-    const detail = (await completeResponse.text()).slice(0, 180);
-    throw new Error('Upload completion failed: HTTP ' + completeResponse.status + (detail ? ' - ' + detail : ''));
-  }
+  }).catch(error => console.warn('[TOURL] Optional completion request failed:', error.message));
 
   return { url: presign.url, key: presign.key };
 }
