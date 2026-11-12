@@ -68,7 +68,7 @@ export async function saveMediaAsset({ owner, pack, kind, name, mime, size, url,
 
 export async function getPackMedia(pack, kind) {
   if (mongoose.connection.readyState !== 1) throw new Error('MongoDB connection is required for URL metadata and media packs.');
-  return MediaAsset.findOne({ pack: String(pack).trim().toLowerCase(), kind }).sort({ createdAt: -1 }).lean();
+  // Ignore legacy GridFS/internal references. Only host-issued HTTPS URLs are playable.\n  return MediaAsset.findOne({ pack: String(pack).trim().toLowerCase(), kind, url: /^https:\\/\\//i }).sort({ createdAt: -1 }).lean();
 }
 
 export async function listPacks() {
@@ -81,7 +81,7 @@ export async function listPacks() {
 
 export async function listPackItems(pack) {
   if (mongoose.connection.readyState !== 1) throw new Error('MongoDB connection is required for URL metadata and media packs.');
-  return MediaAsset.find({ pack: String(pack).trim().toLowerCase() }).sort({ createdAt: -1 }).limit(20).lean();
+  return MediaAsset.find({ pack: String(pack).trim().toLowerCase(), url: /^https:\\/\\//i }).sort({ createdAt: -1 }).limit(20).lean();
 }
 
 export function mediaKindFromMime(mime) {
