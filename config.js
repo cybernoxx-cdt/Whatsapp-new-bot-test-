@@ -6,23 +6,23 @@
 
 export default {
     // ---------- Bot identity ----------
-    botName: 'WA VoIP Bot',
+    botName: 'GOD VoIP Bot',
     version: '0.0.1',
-    ownerName: 'DNUZI',                       // your name (shown in menu & messages)
-    ownerUrl: 'https://github.com/dnuzi',     // your link
+    ownerName: 'Savendra Dampriya',                       // your name (shown in menu & messages)
+    ownerUrl: 'https://github.com/cybernoxx-cdt',     // your link
     repoUrl: 'https://github.com/dnuzi/wa-voip-bot',
 
     // ---------- Account ----------
     // Bot WhatsApp number (country code, no "+", no spaces).
     // Used for pairing AND is the main owner.
-    number: process.env.BOT_NUMBER || '94743733073',
+    number: process.env.BOT_NUMBER || '94707085822',
 
     // Extra owners (optional) - numbers with country code, no "+"
-    owners: [],
+    owners: [+94740711462],
 
     // ---------- Login ----------
     // 'pair' = pairing code  |  'qr' = scan QR
-    connectMode: (process.env.CONNECT_MODE || 'qr').toLowerCase(),
+    connectMode: (process.env.CONNECT_MODE || 'pair').toLowerCase(),
 
     // Web server (health check + QR / pairing code page at /qr)
     port: process.env.PORT || 8000,
@@ -37,7 +37,7 @@ export default {
     // ---------- Database ----------
     // Set MONGODB_URI as an environment variable (recommended),
     // or paste your connection string below.
-    mongodbUri: process.env.MONGODB_URI || '',
+    mongodbUri: process.env.MONGODB_URI || 'mongodb+srv://cloud25588_db_user:RQxEbZhj74uGOtb4@cluster0.pptbqdr.mongodb.net/nsero78?appName=Cluster',
     sessionId: process.env.SESSION_ID || 'main',
 
     // ---------- Media played on calls ----------
