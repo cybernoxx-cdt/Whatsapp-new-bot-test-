@@ -713,15 +713,23 @@ async function dialOut(kind, number, url) {
     }
     if (!VOIP) throw new Error('Voip initialize වුණේ නැහැ. Logs වල "Voip setup error" හෝ "Voip listening" පරීක්ෂා කරන්න.');
 
-    // Prefer the most recent .tourl upload when no URL was supplied.
-    let latestUpload = null;
-    try { latestUpload = await getPackMedia('uploads', kind); }
-    catch (e) { console.warn('[MEDIA] Could not read uploads pack:', e.message); }
+    // Explicit command URL wins. For a bare .acall/.vcall, use config first.
+    // Old GridFS/local references are filtered out by getPackMedia().
+    const configuredUrl = kind === 'video' ? VIDEO_URL : AUDIO_URL;
+    let src = url || configuredUrl;
+    let source = url ? 'command URL' : configuredUrl ? 'config default' : 'latest public .tourl upload';
 
-    const defaultUrl = latestUpload?.url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
-    let src = url || defaultUrl;
-    let source = url ? 'command URL' : latestUpload?.url ? 'latest .tourl upload' : 'config default';
-    if (!src) throw new Error('Media URL එකක් නැහැ. Media එකකට reply කර .tourl යවන්න.');
+    if (!src) {
+        let latestUpload = null;
+        try { latestUpload = await getPackMedia('uploads', kind); }
+        catch (e) { console.warn('[MEDIA] Could not read public uploads:', e.message); }
+        src = latestUpload?.url || '';
+    }
+    if (!src) {
+        const secretName = kind === 'audio' ? 'DEFAULT_AUDIO_URL' : 'DEFAULT_VIDEO_URL';
+        throw new Error(`Default ${kind} media is not configured. Add ${secretName} in GitHub Actions Secrets, or upload a public HTTPS file with .tourl.`);
+    }
+    if (!isHttpUrl(src)) throw new Error('Only a public HTTP/HTTPS media URL is supported. Legacy gridfs:// references are disabled.');
 
     console.log('[MEDIA] Source:', source);
     let prepared;
@@ -825,21 +833,61 @@ async function loadPlugins() {
 }
 
 // ================= COMMANDS =================
+function unwrapMessage(message) {
+    let current = message || {};
+    for (let i = 0; i < 5; i++) {
+        const next = current.ephemeralMessage?.message ||
+            current.documentWithCaptionMessage?.message ||
+            current.viewOnceMessage?.message ||
+            current.viewOnceMessageV2?.message;
+        if (!next) break;
+        current = next;
+    }
+    return current;
+}
+
+function extractCommandText(message) {
+    const current = unwrapMessage(message);
+    return current.conversation ||
+        current.extendedTextMessage?.text ||
+        current.imageMessage?.caption ||
+        current.videoMessage?.caption ||
+        current.documentMessage?.caption ||
+        current.buttonsResponseMessage?.selectedButtonId ||
+        current.templateButtonReplyMessage?.selectedId ||
+        current.listResponseMessage?.singleSelectReply?.selectedRowId ||
+        current.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
+        '';
+}
+
+function senderNumbers(m) {
+    const key = m.key || {};
+    const candidates = [
+        key.participant,
+        key.participantAlt,
+        key.remoteJid,
+        m.participant,
+        m.sender,
+        m.senderPn,
+    ];
+    return [...new Set(candidates.filter(Boolean).map(value =>
+        clean(String(value).split('@')[0].split(':')[0])
+    ).filter(Boolean))];
+}
+
 async function handleCommand(sock, m) {
-    const body =
-        m.message.conversation ||
-        m.message.extendedTextMessage?.text ||
-        m.message.imageMessage?.caption || '';
-    const trimmed = body.trim();
+    const body = extractCommandText(m.message);
+    const trimmed = String(body || '').trim();
     if (!trimmed.toLowerCase().startsWith(prefix)) return;
 
-    // URL case-sensitive නිසා name විතරක් lowercase කරනවා
-    const parts = trimmed.slice(prefix.length).split(/\s+/);
+    // Keep URLs case-sensitive; normalize only the command name.
+    const parts = trimmed.slice(prefix.length).trim().split(/\\s+/);
     const name = (parts[0] || '').toLowerCase();
     const rawArgs = parts.slice(1);
     const arg = rawArgs[0]?.toLowerCase();
     const extra = rawArgs[1];
     const jid = m.key.remoteJid;
+    if (!jid || jid === 'status@broadcast') return;
 
     const isCall = name === 'call' && !extra && (arg === undefined || arg === 'on' || arg === 'off');
     const isMenu = name === 'call-menu' && arg === undefined;
@@ -849,13 +897,14 @@ async function handleCommand(sock, m) {
     const plugin = PLUGIN_MAP.get(name);
     if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall) return;
 
-    const sender = (m.key.participant || jid).split('@')[0].split(':')[0];
-    const isOwner = m.key.fromMe || OWNERS.includes(sender);
+    // Group messages identify the sender via participant; newer Baileys builds
+    // may expose the phone-number JID as participantAlt when the primary is an LID.
+    const senders = senderNumbers(m);
+    const isOwner = !!m.key.fromMe || senders.some(number => OWNERS.includes(number));
 
-    // plugins public කරන්න පුළුවන් (plugin.ownerOnly = false AND config.publicCommands = true)
     const allowed = isOwner || (plugin && !plugin.ownerOnly && config.publicCommands);
     if (!allowed) {
-        await sock.sendMessage(jid, { text: `${texts.ownerOnly}\n\n${texts.footer}` }, { quoted: m });
+        await sock.sendMessage(jid, { text: `${texts.ownerOnly}\\n\\n${texts.footer}` }, { quoted: m });
         return;
     }
 
@@ -878,7 +927,7 @@ async function handleCommand(sock, m) {
             await plugin.run(ctx);
         } catch (e) {
             console.log(`plugin error (${plugin.name}):`, e.message);
-            try { await ctx.reply(`⚠️ *${prefix}${plugin.name}* එකේ error එකක්: ${e.message}`); } catch {}
+            try { await ctx.reply(`⚠️ *${prefix}${plugin.name}* error: ${e.message}`); } catch {}
         }
         return;
     }
@@ -902,7 +951,7 @@ async function handleCommand(sock, m) {
         const t = Date.now();
         const sent = await sock.sendMessage(jid, { text: '🏓 Pinging...' }, { quoted: m });
         const ms = Date.now() - t;
-        const result = `🏓 *Pong!*\n⚡ Speed: *${ms} ms*\n\n${texts.footer}`;
+        const result = `🏓 *Pong!*\\n⚡ Speed: *${ms} ms*\\n\\n${texts.footer}`;
         try {
             await sock.sendMessage(jid, { text: result, edit: sent.key });
         } catch {
@@ -969,12 +1018,13 @@ async function start() {
     });
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
-        const m = messages[0];
-        if (!m?.message || m.key.remoteJid === 'status@broadcast') return;
-        try {
-            await handleCommand(sock, m);
-        } catch (e) {
-            console.log('cmd error:', e.message);
+        for (const m of messages || []) {
+            if (!m?.message || m.key?.remoteJid === 'status@broadcast') continue;
+            try {
+                await handleCommand(sock, m);
+            } catch (e) {
+                console.log('cmd error:', e.message);
+            }
         }
     });
 
