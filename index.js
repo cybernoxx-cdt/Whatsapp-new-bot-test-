@@ -26,20 +26,32 @@ function _shouldPrint(args) {
     const line = args.map(v => typeof v === 'string' ? v : (v?.message || '')).join(' ');
     // Bad MAC is a per-message decrypt failure from stale/rotated Signal sessions.
     // Keep one concise diagnostic per 10 minutes, never dump repeated stacks.
-    const key = /Bad MAC|Failed to decrypt message with any known session/i.test(line)
-        ? 'baileys-bad-mac'
-        : /Session saved to MongoDB/i.test(line) ? 'session-saved'
-        : null;
+    // Baileys Signal ratchet diagnostics can include full SessionEntry objects
+    // (private key material and buffers). Never print those internals to CI logs.
+    const key = /Closing open session in favor of incoming prekey bundle|Closing session:\s*SessionEntry/i.test(line)
+        ? 'signal-ratchet'
+        : /Bad MAC|Failed to decrypt message with any known session/i.test(line)
+            ? 'baileys-bad-mac'
+            : /Session saved to MongoDB/i.test(line) ? 'session-saved'
+            : null;
     if (!key) return true;
     const now = Date.now(), last = _logSeen.get(key) || 0;
-    const interval = key === 'session-saved' ? 60000 : 600000;
+    const interval = key === 'session-saved' ? 300000 : 600000;
     if (now - last < interval) return false;
     _logSeen.set(key, now);
     if (key === 'baileys-bad-mac') {
-        _log('⚠️ Baileys decrypt warning (Bad MAC). Repeated copies suppressed; check for stale/mismatched auth keys.');
+        _log('⚠️ [SECURITY] Message decrypt warning (Bad MAC). Repeated diagnostics hidden; verify the linked-device session if message decryption keeps failing.');
         return false;
     }
-    return true;
+    if (key === 'signal-ratchet') {
+        _log('🔐 [SECURITY] WhatsApp encryption session refreshed. Internal key details hidden.');
+        return false;
+    }
+    if (key === 'session-saved') {
+        _log('💾 [DATABASE] WhatsApp session backup updated.');
+        return false;
+    }
+    return false;
 }
 console.log = (...a) => { if (_shouldPrint(a)) _log(...a); };
 console.warn = (...a) => { if (_shouldPrint(a)) _warn(...a); };
