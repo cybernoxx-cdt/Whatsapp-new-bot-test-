@@ -1,44 +1,43 @@
 // ============================================================
-//  WA VoIP Bot - config.js 
-//  FREE SCRIPT - Made by DNUZI 
+//  GOD VOIP MD - config.js
 //  Edit this file to customize your bot.
 // ============================================================
 
 export default {
     // ---------- Bot identity ----------
-    botName: 'GOD VoIP Bot',
-    version: '0.0.1',
-    ownerName: 'Savendra Dampriya',                       // your name (shown in menu & messages)
-    ownerUrl: 'https://github.com/cybernoxx-cdt',     // your link
-    repoUrl: 'https://github.com/dnuzi/wa-voip-bot',
+    botName: 'GOD VOIP MD',
+    version: '1.0.0',
+    ownerName: 'Savendra',                    // menu / messages වල පෙන්වන නම
+    ownerUrl: '',
+    repoUrl: '',
+
+    // ---------- SESSION ID (මෙතනට paste කරන්න) ----------
+    // Deploy කරද්දී bot එක මේ session එකෙන් කෙලින්ම login වෙනවා.
+    // Pair code / QR logs වල කිසිම තැනක පෙන්නන්නේ නෑ.
+    // Heroku වල නම් SESSION_ID config var එකත් පාවිච්චි කරන්න පුළුවන් (ඒකට priority).
+    sessionId: process.env.SESSION_ID || '𝙰𝚂𝙸𝚃𝙷𝙰-𝙼𝙳=e00415e12af99365',
+
+    // Session ID එක කෙටි id එකක් (උදා: xxxx=e00415e12af99365) නම්, ඒක ගන්න පුළුවන්
+    // server එකේ URL එක මෙතන දාන්න. {id} කියන තැනට id එක ආදේශ වෙනවා.
+    // උදා: 'https://your-session-server.com/session/{id}'
+    // (Base64 / MEGA link session නම් මේක හිස්ව තියන්න)
+    sessionApi: process.env.SESSION_API || '',
 
     // ---------- Account ----------
-    // Bot WhatsApp number (country code, no "+", no spaces).
-    // Used for pairing AND is the main owner.
+    // Main owner number (country code, "+" නැතුව). Session එකේ number එක නෙවෙයි නම් මෙතන දාන්න.
     number: process.env.BOT_NUMBER || '94707085822',
 
-    // Extra owners (optional) - numbers with country code, no "+"
-    owners: [+94740711462],
+    // Extra owners (optional)
+    owners: [],
 
-    // ---------- Login ----------
-    // 'pair' = pairing code  |  'qr' = scan QR
-    connectMode: (process.env.CONNECT_MODE || 'pair').toLowerCase(),
-
-    // Web server (health check + QR / pairing code page at /qr)
+    // Web server (Heroku / health check සඳහා විතරයි)
     port: process.env.PORT || 8000,
 
     // ---------- Commands ----------
     prefix: '.',
 
-    // false = only the owner can use plugin commands (.ping .alive .info ...)
-    // true  = everyone can use plugins that have  ownerOnly: false
+    // false = owner විතරයි commands use කරන්න පුළුවන්
     publicCommands: false,
-
-    // ---------- Database ----------
-    // Set MONGODB_URI as an environment variable (recommended),
-    // or paste your connection string below.
-    mongodbUri: process.env.MONGODB_URI || 'mongodb+srv://cloud25588_db_user:RQxEbZhj74uGOtb4@cluster0.pptbqdr.mongodb.net/nsero78?appName=Cluster',
-    sessionId: process.env.SESSION_ID || '𝙰𝚂𝙸𝚃𝙷𝙰-𝙼𝙳=e00415e12af99365',
 
     // ---------- Media played on calls ----------
     // Direct links (audio: .opus/.mp3/.ogg - video: .mp4)
@@ -47,19 +46,19 @@ export default {
 
     // ---------- Texts ----------
     texts: {
-        fail: '⚠️ Call system is busy, please try again.',
-        ownerOnly: '🔒 This command is for the owner only.',
-        freeNote: '🆓 This is a free script. Do not sell it.',
-        footer: '> ✦ Made by DNUZI • Free Script',
+        fail: '⚠️ Call system එක busy. නැවත උත්සාහ කරන්න.',
+        ownerOnly: '🔒 මේ command එක owner ට විතරයි.',
+        footer: '> ✦ GOD VOIP MD',
     },
 
     // ---------- Voip options ----------
     voip: {
         logLevel: 'warn',
         maxConcurrentCalls: 3,
+        callResolution: '480p',     // .vcall video call quality
     },
 
-    // Auto call state on the very first start
-    // (after that the value saved in MongoDB is used)
+    // Auto answer (incoming call → media play) පළමු start එකේදී ON ද OFF ද
+    // (පස්සේ .call on / .call off වලින් වෙනස් කළාම ./data/settings.json එකේ save වෙනවා)
     autoCallDefault: true,
 };
