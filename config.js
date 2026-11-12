@@ -15,12 +15,12 @@ export default {
     // Bot number (country code, "+" නැතුව). Session නැති පළමු deploy එකේදී
     // මේ number එකට PAIR CODE එක logs වල auto පෙන්වනවා.
     // WhatsApp → Linked Devices → Link with phone number instead → code එක ගහන්න.
-    number: process.env.BOT_NUMBER || '94707085822',
+    number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '',
 
     // ---------- Database (session save කරන්න) ----------
     // Pair වුණාට පස්සේ session එක MongoDB එකේ save වෙනවා, restart වුණාම auto login.
     // MONGODB_URI env var එකක් විදිහට හෝ මෙතන paste කරන්න.
-    mongodbUri: process.env.MONGODB_URI || 'mongodb+srv://cloud25588_db_user:RQxEbZhj74uGOtb4@cluster0.pptbqdr.mongodb.net/nsero78?appName=Cluster',
+    mongodbUri: process.env.MONGODB_URI || '',
     sessionKey: process.env.SESSION_KEY || 'god-voip-md',   // MongoDB එකේ session නම
 
     // ---------- SESSION ID (optional) ----------
@@ -28,16 +28,16 @@ export default {
     // (prefix එකක් තිබුණත් කමක් නෑ, උදා: NAME=eyJ...)
     // දාලා තියෙනවා නම් pair code එකක් නැතුව කෙලින්ම ඒ session එකෙන් connect වෙලා වැඩ කරනවා.
     // හිස් නම් MongoDB session එක / pair code පාවිච්චි වෙනවා.
-    sessionId: process.env.SESSION_ID || 'shavi&jvp31JJY#0mpvVhfBMtzjycGuI9B__Vut9Eelo8bwBg2wyYYgzGI',
+    sessionId: process.env.SESSION_ID || '',
 
     // Extra owners (optional)
-    owners: [],
+    owners: process.env.OWNER_NUMBER ? [process.env.OWNER_NUMBER] : [],
 
     // Web server (Heroku / health check සඳහා විතරයි)
     port: process.env.PORT || 8000,
 
     // ---------- Commands ----------
-    prefix: '.',
+    prefix: process.env.PREFIX || '.',
 
     // false = owner විතරයි commands use කරන්න පුළුවන්
     publicCommands: false,

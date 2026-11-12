@@ -3,3 +3,7 @@ session/
 tmp/
 .env
 *.log
+
+auth_baileys/
+creds.json
+pairing-code.txt

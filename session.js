@@ -8,8 +8,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-const SESSION_DIR = './session';
-const SRC_FILE = './session.src';
+const SESSION_DIR = fs.existsSync('./auth_baileys/creds.json') ? './auth_baileys' : './session';
+const SRC_FILE = path.join(SESSION_DIR, '.session.src');
 
 // 𝙰𝚂𝙸𝚃𝙷𝙰 වගේ fancy letters → සාමාන්‍ය letters
 const normalize = (s) => String(s || '').normalize('NFKC').trim();

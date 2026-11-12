@@ -1,73 +1,46 @@
-name: SHAVIYA-XMD
+name: GOD VOIP MD
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-  # Auto re-trigger if workflow finishes/fails (keeps bot alive longer)
+    branches: [main]
   schedule:
-    - cron: "0 */5 * * *"   # every 5 hours re-check / restart job
+    - cron: "0 */5 * * *"
+
+concurrency:
+  group: whatsapp-bot-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   bot:
     runs-on: ubuntu-latest
-    # GitHub free runners max ~6 hours per job
-    timeout-minutes: 360
-
+    timeout-minutes: 350
     steps:
-      - name: Checkout Bot
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "22"
+          cache: npm
 
-      - name: Install Dependencies
-        run: |
-          npm install --omit=dev
-          # optional: rebuild native deps if needed
-          # npm rebuild
+      - name: Install dependencies
+        run: npm install --omit=dev
 
-      - name: Start Bot (auto restart forever)
+      - name: Start bot
         env:
-          # Secrets → GitHub repo → Settings → Secrets and variables → Actions
-          SESSION_ID: ${{ secrets.SESSION_ID }}
+          BOT_NUMBER: ${{ secrets.BOT_NUMBER }}
           OWNER_NUMBER: ${{ secrets.OWNER_NUMBER }}
-          PREFIX: ${{ secrets.PREFIX }}
-          MODE: ${{ secrets.MODE }}
+          SESSION_ID: ${{ secrets.SESSION_ID }}
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+          TOURL_API_KEY: ${{ secrets.TOURL_API_KEY }}
+          TOURL_BASE_URL: ${{ secrets.TOURL_BASE_URL }}
+          PREFIX: ${{ secrets.PREFIX }}
         run: |
-          echo "================================="
-          echo " SHAVIYA-XMD — Auto Restart"
-          echo "================================="
-
-          RESTART_COUNT=0
-
-          while true; do
-            RESTART_COUNT=$((RESTART_COUNT + 1))
-            echo ""
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Start #$RESTART_COUNT"
-            echo "---------------------------------"
-
-            # Run bot — if crash/exit, loop continues
-            node index.js
-            EXIT_CODE=$?
-
-            echo "---------------------------------"
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bot stopped | Exit: $EXIT_CODE"
-
-            # Exit codes you may want to STOP restarting (optional)
-            # 42 = manual stop signal you define in code
-            if [ "$EXIT_CODE" -eq 42 ]; then
-              echo "Manual stop requested (exit 42). Exiting workflow."
-              exit 0
-            fi
-
-            # Fast crash protection — if dies under 15s, wait longer
-            echo "Restarting in 10 seconds..."
-            sleep 10
-          done
+          echo "GOD VOIP MD starting (pairing codes are suppressed in CI logs)"
+          node index.js

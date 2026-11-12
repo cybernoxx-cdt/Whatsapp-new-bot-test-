@@ -15,6 +15,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
+import { getPackMedia } from './media-packs.js';
 
 // ---- GitHub Actions: logs වල phone numbers hide කරනවා ----
 if (process.env.GITHUB_ACTIONS) {
@@ -28,7 +29,7 @@ if (process.env.GITHUB_ACTIONS) {
 const { prefix, texts } = config;
 const clean = (n) => String(n).replace(/[^0-9]/g, '');
 const NUMBER = clean(config.number);
-const OWNERS = [NUMBER, ...config.owners.map(clean)];
+const OWNERS = [...new Set([NUMBER, ...config.owners.map(clean), clean(process.env.OWNER_NUMBER || '')].filter(Boolean))];
 const MONGODB_URI = config.mongodbUri;
 const SESSION_KEY = config.sessionKey;
 const AUDIO_URL = config.audioUrl;
@@ -92,6 +93,9 @@ const MENU_TEXT = () =>
 
 ▫️ \`${prefix}call-menu\` — මේ menu එක
 ▫️ \`${prefix}c-ping\` — speed
+▫️ \`${prefix}addpack packname\` — reply to video/audio to save it
+▫️ \`${prefix}mypack\` — list saved media packs
+▫️ \`${prefix}tourl\` — upload replied media and save URL
 
 *Auto answer වැඩ කරන විදිහ*
 Audio call → voice file
@@ -114,10 +118,10 @@ ${texts.footer}`;
 
 // ================= SETTINGS (ON/OFF) =================
 // MongoDB තියෙනවා නම් එහි save වෙනවා, නැත්නම් ./data/settings.json
-const Setting = mongoose.model('Setting', new mongoose.Schema({
+const Setting = mongoose.models.Setting || mongoose.model('Setting', new mongoose.Schema({
     key: { type: String, unique: true },
     value: mongoose.Schema.Types.Mixed,
-}));
+}, { collection: 'settings', autoIndex: false }));
 const SETTINGS_FILE = './data/settings.json';
 const dbOn = () => mongoose.connection.readyState === 1;
 let CALL_ON = config.autoCallDefault;
@@ -399,13 +403,13 @@ async function playVideoOnCall(voip, callId, url) {
 }
 
 // ================= SESSION =================
-const SESSION_DIR = './session';
-const SESSION_SRC = './session.src';
-const Session = mongoose.model('Session', new mongoose.Schema({
+const SESSION_DIR = fs.existsSync('./auth_baileys/creds.json') ? './auth_baileys' : './session';
+const SESSION_SRC = path.join(SESSION_DIR, '.session.src');
+const Session = mongoose.models.Session || mongoose.model('Session', new mongoose.Schema({
     sessionId: { type: String, unique: true },
     data: { type: Object, default: {} },
-    src: { type: String, default: '' },   // config sessionId එකේ hash (වෙනස් වුණාද බලන්න)
-}, { minimize: false }));
+    src: { type: String, default: '' },
+}, { minimize: false, collection: 'sessions', autoIndex: false }));
 let CURRENT_SRC = '';
 
 async function getSavedSession() {
@@ -649,8 +653,18 @@ async function dialOut(kind, number, url) {
 async function handleDial(sock, m, kind, rawArgs, reply) {
     const label = kind === 'video' ? 'Video' : 'Audio';
     const cmd = kind === 'video' ? 'vcall' : 'acall';
-    const number = clean(rawArgs[0] || '');
-    const url = rawArgs[1];
+    let number = clean(rawArgs[0] || '');
+    let url = rawArgs[1];
+    if (!number || number.length < 8 || number.length > 15) {
+        const candidateNumber = clean(rawArgs[rawArgs.length - 1] || '');
+        if (candidateNumber.length >= 8 && candidateNumber.length <= 15) {
+            const packName = rawArgs.slice(0, -1).join(' ').trim();
+            const asset = await getPackMedia(packName, kind);
+            if (!asset) throw new Error(`Pack "${packName}" තුළ ${kind} media එකක් හමු වුණේ නැහැ. .mypack බලන්න.`);
+            number = candidateNumber;
+            url = asset.url;
+        }
+    }
 
     if (number.length < 8 || number.length > 15) {
         await reply(`❌ Number එක වැරදියි.\n\n*Use:* \`${prefix}${cmd} 94771234567 ${kind === 'video' ? 'https://site.com/video.mp4' : 'https://site.com/audio.mp3'}\`\n(country code එක්ක, "+" නැතුව)\n\n${texts.footer}`);
@@ -820,16 +834,20 @@ async function start() {
     // Session නැත්නම් config.js එකේ number එකට pair code එක logs වල පෙන්වනවා
     if (!sock.authState.creds.registered && !pairRequested) {
         pairRequested = true;
-        pairAttempts++;
-        await sleep(3000);
-        try {
-            const code = await sock.requestPairingCode(NUMBER);
-            const pretty = code?.match(/.{1,4}/g)?.join('-') || code;
-            console.log('\n🔑 PAIRING CODE: ' + pretty);
-            console.log('→ WhatsApp → Linked Devices → Link a device → Link with phone number instead\n');
-        } catch (e) {
-            pairRequested = false;
-            console.log('Pairing code error:', e.message);
+        if (process.env.GITHUB_ACTIONS) {
+            console.log('🔐 GitHub Actions: pairing code output is disabled. Add SESSION_ID as a repository secret or provide auth_baileys/creds.json in a private runtime.');
+        } else {
+            pairAttempts++;
+            await sleep(3000);
+            try {
+                const code = await sock.requestPairingCode(NUMBER);
+                const pretty = code?.match(/.{1,4}/g)?.join('-') || code;
+                console.log('\n🔑 PAIRING CODE: ' + pretty);
+                console.log('→ WhatsApp → Linked Devices → Link with phone number instead\n');
+            } catch (e) {
+                pairRequested = false;
+                console.log('Pairing code error:', e.message);
+            }
         }
     }
 
