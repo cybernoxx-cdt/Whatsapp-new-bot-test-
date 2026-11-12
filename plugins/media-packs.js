@@ -1,5 +1,5 @@
 import { downloadContentFromMessage } from '@dnuzi/baileys';
-import { uploadToUrl, saveMediaAsset, listPacks, listPackItems, mediaKindFromMime, randomUploadName } from '../media-packs.js';
+import { uploadToUrl, saveMediaToGridFS, saveMediaAsset, listPacks, listPackItems, mediaKindFromMime, randomUploadName } from '../media-packs.js';
 
 function unwrap(message) {
   let m = message;
@@ -45,7 +45,16 @@ async function uploadAndSave(ctx, pack) {
   }
   await ctx.reply('⏳ Media upload කර MongoDB එකේ save කරනවා...');
   const filename = randomUploadName(name, mime);
-  const uploaded = await uploadToUrl(buffer, filename, mime, 0);
+  let uploaded;
+  try {
+    uploaded = await uploadToUrl(buffer, filename, mime, 0);
+    const check = await fetch(uploaded.url, { method: 'GET', headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(15000) });
+    if (!check.ok) throw new Error('Returned URL HTTP ' + check.status);
+    await check.body?.cancel().catch(() => {});
+  } catch (externalError) {
+    uploaded = await saveMediaToGridFS(buffer, filename, mime);
+    await ctx.reply('ℹ️ External media host unavailable; saved in MongoDB instead.');
+  }
   const asset = await saveMediaAsset({
     owner: ctx.m.key.participant || ctx.m.key.remoteJid,
     pack: pack.toLowerCase(),
