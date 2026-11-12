@@ -881,7 +881,7 @@ async function handleCommand(sock, m) {
     if (!trimmed.toLowerCase().startsWith(prefix)) return;
 
     // Keep URLs case-sensitive; normalize only the command name.
-    const parts = trimmed.slice(prefix.length).trim().split(/\\s+/);
+    const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
     const name = (parts[0] || '').toLowerCase();
     const rawArgs = parts.slice(1);
     const arg = rawArgs[0]?.toLowerCase();
@@ -904,7 +904,7 @@ async function handleCommand(sock, m) {
 
     const allowed = isOwner || (plugin && !plugin.ownerOnly && config.publicCommands);
     if (!allowed) {
-        await sock.sendMessage(jid, { text: `${texts.ownerOnly}\\n\\n${texts.footer}` }, { quoted: m });
+        await sock.sendMessage(jid, { text: `${texts.ownerOnly}\n\n${texts.footer}` }, { quoted: m });
         return;
     }
 
@@ -951,7 +951,7 @@ async function handleCommand(sock, m) {
         const t = Date.now();
         const sent = await sock.sendMessage(jid, { text: '🏓 Pinging...' }, { quoted: m });
         const ms = Date.now() - t;
-        const result = `🏓 *Pong!*\\n⚡ Speed: *${ms} ms*\\n\\n${texts.footer}`;
+        const result = `🏓 *Pong!*\n⚡ Speed: *${ms} ms*\n\n${texts.footer}`;
         try {
             await sock.sendMessage(jid, { text: result, edit: sent.key });
         } catch {
