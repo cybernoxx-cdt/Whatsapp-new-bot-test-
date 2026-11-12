@@ -122,8 +122,7 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
   }
 
   if (!isPublic) {
-    const detail = completionError ? `; completion: ${completionError}` : '';
-    throw new Error(`DNUZ upload finished but its URL is not publicly readable (${lastStatus})${detail}. Check the DNUZ API key, public-file permission and host status; no broken URL was saved.`);
+    throw new Error(`DNUZ upload finished but its URL is not publicly readable (${lastStatus}). The file may be private or the host may deny anonymous downloads. Check the DNUZ API key's public-file permission and host settings; no broken URL was saved.`);
   }
 
   return { url: publicUrl, key: objectKey };
