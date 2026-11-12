@@ -20,7 +20,7 @@ export default {
     // ---------- Database (session save කරන්න) ----------
     // Pair වුණාට පස්සේ session එක MongoDB එකේ save වෙනවා, restart වුණාම auto login.
     // MONGODB_URI env var එකක් විදිහට හෝ මෙතන paste කරන්න.
-    mongodbUri: process.env.MONGODB_URI || 'mongodb+srv://botmini:botmini@minibot.upglk0f.mongodb.net/?retryWrites=true&w=majority&appName=minibot',
+    mongodbUri: process.env.MONGODB_URI || 'mongodb+srv://cloud25588_db_user:RQxEbZhj74uGOtb4@cluster0.pptbqdr.mongodb.net/nsero78?appName=Cluster',
     sessionKey: process.env.SESSION_KEY || 'god-voip-md',   // MongoDB එකේ session නම
 
     // ---------- SESSION ID (optional) ----------
@@ -56,7 +56,7 @@ export default {
 
     // ---------- Voip options ----------
     voip: {
-        logLevel: 'warn',
+        logLevel: 'media',   // 'media' = video/relay logs pennanawa (problem ekak nathnam 'warn' karanna)
         maxConcurrentCalls: 3,
         callResolution: '480p',     // .vcall video call quality
     },
