@@ -31,6 +31,32 @@ jobs:
       - name: Install dependencies
         run: npm install --omit=dev --no-audit --no-fund
 
+      - name: Validate source syntax
+        run: |
+          set -e
+          find . -path ./node_modules -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+          echo "✅ JavaScript syntax checks passed"
+
+      - name: Validate required configuration
+        env:
+          BOT_NUMBER: ${{ secrets.BOT_NUMBER }}
+          OWNER_NUMBER: ${{ secrets.OWNER_NUMBER }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          SESSION_ID: ${{ secrets.SESSION_ID }}
+        run: |
+          if [ -z "$BOT_NUMBER" ] && [ -z "$OWNER_NUMBER" ]; then
+            echo "::error::Missing BOT_NUMBER or OWNER_NUMBER GitHub Secret. Add the WhatsApp number in international format (digits only) under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if [ -z "$MONGODB_URI" ]; then
+            echo "::error::Missing MONGODB_URI GitHub Secret."
+            exit 1
+          fi
+          if [ -z "$SESSION_ID" ]; then
+            echo "::warning::SESSION_ID is empty. A valid existing local session is required for headless GitHub Actions."
+          fi
+          echo "✅ Required configuration validated"
+
       - name: Start bot
         env:
           BOT_NUMBER: ${{ secrets.BOT_NUMBER }}
