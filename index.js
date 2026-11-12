@@ -730,10 +730,13 @@ async function dialOut(kind, number, url) {
         // If an explicitly supplied host rejects the file (403/404), recover
         // using the latest media that .tourl uploaded and saved in MongoDB.
         const rejected = /HTTP (401|403|404|410)|not publicly downloadable|HTML page instead/i.test(error.message);
-        if (!rejected || !latestUpload?.url || latestUpload.url === src) throw error;
-        console.warn('[MEDIA] Supplied URL rejected; retrying latest .tourl upload.');
+        if (!rejected) throw error;
+        if (!latestUpload?.url || latestUpload.url === src) {
+            throw new Error('Supplied media URL was rejected by its host (HTTP 403/404). First reply to the actual video/audio and run .tourl; wait for “Upload complete”, then run .vcall NUMBER without a URL. MongoDB internal uploads are supported; a gridfs:// link is not a public URL.');
+        }
+        console.warn('[MEDIA] Supplied URL rejected; retrying saved MongoDB upload.');
         src = latestUpload.url;
-        source = 'latest .tourl upload (fallback)';
+        source = String(src).startsWith('gridfs://') ? 'MongoDB GridFS upload (fallback)' : 'saved .tourl upload (fallback)';
         console.log('[MEDIA] Source:', source);
         prepared = await prepareMedia(src, kind === 'video');
     }
