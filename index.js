@@ -713,7 +713,16 @@ const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(u || '');
 
 async function dialOut(kind, number, url) {
     if (!VOIP) throw new Error('Voip තාම ready නෑ. තත්පර කිහිපයකින් නැවත try කරන්න.');
-    const src = url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
+    // Prefer the newest .tourl upload when caller omits an explicit URL.
+    // This prevents silently reusing an expired/403 legacy config media URL.
+    let latestUpload = null;
+    if (!url) {
+        try { latestUpload = await getPackMedia('uploads', kind); }
+        catch (e) { console.warn('[MEDIA] Could not read latest uploads pack:', e.message); }
+    }
+    const src = url || latestUpload?.url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
+    if (!src) throw new Error('Media URL එකක් නැහැ. Media එකකට reply කර .tourl යවලා නැවත .vcall / .acall කරන්න.');
+    console.log('[MEDIA] Source:', url ? 'command URL' : latestUpload?.url ? 'latest .tourl upload' : 'config default');
 
     // Download + convert ourselves, so the library never guesses "audio" from the URL.
     const prepared = await prepareMedia(src, kind === 'video');
