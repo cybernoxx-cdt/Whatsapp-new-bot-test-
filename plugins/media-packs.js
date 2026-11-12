@@ -9,15 +9,23 @@ function unwrap(message) {
   return m || {};
 }
 
-function quotedMedia(ctx) {
-  const context = ctx.m.message?.extendedTextMessage?.contextInfo ||
-    ctx.m.message?.imageMessage?.contextInfo ||
-    ctx.m.message?.videoMessage?.contextInfo;
-  const message = unwrap(context?.quotedMessage);
+function mediaFromMessage(message) {
+  const node = unwrap(message);
   for (const key of ['videoMessage', 'audioMessage', 'imageMessage', 'documentMessage']) {
-    if (message[key]) return { node: message[key], type: key.replace('Message', ''), message };
+    if (node?.[key]) return { node: node[key], type: key.replace('Message', ''), message: node };
   }
   return null;
+}
+
+function quotedMedia(ctx) {
+  const current = mediaFromMessage(ctx.m.message);
+  if (current) return current;
+
+  const context = ctx.m.message?.extendedTextMessage?.contextInfo ||
+    ctx.m.message?.imageMessage?.contextInfo ||
+    ctx.m.message?.videoMessage?.contextInfo ||
+    ctx.m.message?.documentMessage?.contextInfo;
+  return mediaFromMessage(context?.quotedMessage);
 }
 
 async function downloadQuoted(ctx) {
@@ -38,7 +46,7 @@ async function downloadQuoted(ctx) {
   return { buffer, mime, name, kind: mediaKindFromMime(mime) };
 }
 
-async function uploadAndSave(ctx, pack) {
+async function uploadAndSave(ctx, pack, publicOnly = false) {
   const { buffer, mime, name, kind } = await downloadQuoted(ctx);
   if (!['video', 'audio'].includes(kind) && pack !== 'uploads') {
     throw new Error('.addpack සඳහා Video හෝ Audio එකක් අවශ්‍යයි.');
@@ -48,12 +56,24 @@ async function uploadAndSave(ctx, pack) {
   let uploaded;
   try {
     uploaded = await uploadToUrl(buffer, filename, mime, 0);
-    const check = await fetch(uploaded.url, { method: 'GET', headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(15000) });
-    if (!check.ok) throw new Error('Returned URL HTTP ' + check.status);
+    const check = await fetch(uploaded.url, {
+      method: 'GET',
+      headers: { Range: 'bytes=0-0' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000)
+    });
+    if (!check.ok) {
+      await check.body?.cancel().catch(() => {});
+      throw new Error('Returned public URL HTTP ' + check.status);
+    }
     await check.body?.cancel().catch(() => {});
   } catch (externalError) {
+    if (publicOnly) {
+      throw new Error('Public .tourl upload failed: ' + externalError.message +
+        '. Check TOURL_API_KEY / TOURL_BASE_URL and confirm the provider returns a public direct-download URL. No private GridFS URL was returned.');
+    }
     uploaded = await saveMediaToGridFS(buffer, filename, mime);
-    await ctx.reply('ℹ️ External media host unavailable; saved in MongoDB instead.');
+    await ctx.reply('ℹ️ External media host unavailable; saved in MongoDB instead (internal GridFS URL).');
   }
   const asset = await saveMediaAsset({
     owner: ctx.m.key.participant || ctx.m.key.remoteJid,
@@ -75,7 +95,7 @@ export default {
       if (!pack || pack.length > 40) return ctx.reply('Use: .addpack packname (reply to a video/audio)');
       return uploadAndSave(ctx, pack);
     }
-    if (command === 'tourl') return uploadAndSave(ctx, 'uploads');
+    if (command === 'tourl') return uploadAndSave(ctx, 'uploads', true);
     const pack = ctx.args.join(' ').trim().toLowerCase();
     if (pack) {
       const items = await listPackItems(pack);
