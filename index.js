@@ -1,52 +1,34 @@
 // ============================================================
-//  WA VoIP Bot - Free Script
-//  Made by DNUZI  |  https://github.com/dnuzi/wa-voip-bot
+//  GOD VOIP MD
+//  Session config.js එකෙන් • Auto call + .vcall / .acall
 // ============================================================
 
-import * as B from '@dnuzi/baileys'; 
+import * as B from '@dnuzi/baileys';
 import Voip from '@dnuzi/baileys/voip';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
-import mongoose from 'mongoose';
 import express from 'express';
-import QRCode from 'qrcode';
-import qrTerminal from 'qrcode-terminal';
 import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
+import { loadSession } from './session.js';
 
-// ---- GitHub Actions: hide phone numbers in (possibly public) logs ----
-const IN_CI = !!process.env.GITHUB_ACTIONS;
-if (IN_CI) {
+// ---- GitHub Actions: logs වල phone numbers hide කරනවා ----
+if (process.env.GITHUB_ACTIONS) {
     const orig = console.log;
     console.log = (...a) => orig(...a.map(x => typeof x === 'string'
         ? x.replace(/\d{9,15}(?=[:@\s|)])/g, n => n.slice(0, 3) + 'xxxxxx' + n.slice(-2))
         : x));
 }
-// In CI the bot never shows a pairing code / QR (they would end up in the logs).
-// Link once somewhere else (the session is saved in MongoDB). Set CI_LOGIN=1 only for a PRIVATE repo.
-const CI_NO_LOGIN = IN_CI && process.env.CI_LOGIN !== '1';
 
 // ================= SETTINGS =================
 const { prefix, texts } = config;
 const clean = (n) => String(n).replace(/[^0-9]/g, '');
 const NUMBER = clean(config.number);
 const OWNERS = [NUMBER, ...config.owners.map(clean)];
-const MONGODB_URI = config.mongodbUri;
-const SESSION_ID = config.sessionId;
 const AUDIO_URL = config.audioUrl;
 const VIDEO_URL = config.videoUrl;
-const USE_PAIR = config.connectMode !== 'qr';
-
-if (!MONGODB_URI) {
-    console.log('❌ MONGODB_URI is missing. Set it as an environment variable or in config.js');
-    process.exit(1);
-}
-if (USE_PAIR && (!NUMBER || NUMBER.includes('X'))) {
-    console.log('❌ Set your number in config.js (number) for pairing code login');
-    process.exit(1);
-}
 
 // ================= BAILEYS EXPORTS =================
 const pick = (name) => B[name] ?? B.default?.[name] ?? B.default?.default?.[name];
@@ -90,55 +72,61 @@ const statusIcon = () => (CALL_ON ? '🟢 *ON*' : '🔴 *OFF*');
 
 const MENU_TEXT = () =>
 `📞 *${config.botName}*
-_Free script • by ${config.ownerName}_
 
 *Auto Call:* ${statusIcon()}
 
-*Commands*
-▫️ \`${prefix}call on\` — enable auto call
-▫️ \`${prefix}call off\` — disable auto call
-▫️ \`${prefix}call\` — check status
-▫️ \`${prefix}call-menu\` — show this menu
-▫️ \`${prefix}c-ping\` — check speed
+*Auto answer*
+▫️ \`${prefix}call on\` — auto call ON
+▫️ \`${prefix}call off\` — auto call OFF
+▫️ \`${prefix}call\` — status බලන්න
 
-*How it works*
+*Call යවන්න (owner)*
+▫️ \`${prefix}vcall 94771234567 https://site.com/video.mp4\` — video call
+▫️ \`${prefix}acall 94771234567 https://site.com/audio.mp3\` — audio call
+▫️ URL එක දාන්නේ නැත්නම් config.js එකේ default media එක යනවා
+
+▫️ \`${prefix}call-menu\` — මේ menu එක
+▫️ \`${prefix}c-ping\` — speed
+
+*Auto answer වැඩ කරන විදිහ*
 Audio call → voice file
 Video call → video file
 
 👤 *Owner:* ${config.ownerName}
-🔗 ${config.repoUrl}
 
-${texts.freeNote}
 ${texts.footer}`;
 
 const STATUS_TEXT = () =>
 `📞 *Auto Call:* ${statusIcon()}
 
 ${CALL_ON
-    ? 'Incoming calls, group calls and answered outgoing calls will play your media automatically.'
-    : 'The bot will ignore all calls until you turn it on.'}
+    ? 'එන calls, group calls සහ answer කරපු outgoing calls වලට media එක auto play වෙනවා.'
+    : 'ඔයා ON කරනකම් bot එක calls ignore කරනවා.'}
 
-Use \`${prefix}call-menu\` for all commands.
+සියලු commands සඳහා \`${prefix}call-menu\` use කරන්න.
 
 ${texts.footer}`;
 
-// ================= SETTINGS (ON/OFF) =================
-const Setting = mongoose.model('Setting', new mongoose.Schema({
-    key: { type: String, unique: true },
-    value: mongoose.Schema.Types.Mixed,
-}));
-
+// ================= SETTINGS (ON/OFF) - ./data/settings.json =================
+const SETTINGS_FILE = './data/settings.json';
 let CALL_ON = config.autoCallDefault;
 
-async function loadSettings() {
-    const s = await Setting.findOne({ key: 'autoCall' });
-    if (s) CALL_ON = !!s.value;
+function loadSettings() {
+    try {
+        if (fs.existsSync(SETTINGS_FILE)) {
+            const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+            if (typeof j.autoCall === 'boolean') CALL_ON = j.autoCall;
+        }
+    } catch {}
     console.log('📞 Auto call:', CALL_ON ? 'ON' : 'OFF');
 }
 
-async function setCallOn(v) {
+function setCallOn(v) {
     CALL_ON = v;
-    await Setting.findOneAndUpdate({ key: 'autoCall' }, { value: v }, { upsert: true });
+    try {
+        fs.mkdirSync('./data', { recursive: true });
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ autoCall: v }));
+    } catch (e) { console.log('Settings save error:', e.message); }
 }
 
 // ================= MEDIA =================
@@ -310,44 +298,12 @@ async function playVideoOnCall(voip, callId, url) {
 
 // ================= SESSION =================
 const SESSION_DIR = './session';
-const Session = mongoose.model('Session', new mongoose.Schema({
-    sessionId: { type: String, unique: true },
-    data: { type: Object, default: {} },
-}, { minimize: false }));
-
-async function restoreSession() {
-    const s = await Session.findOne({ sessionId: SESSION_ID });
-    if (!s) return false;
-    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
-    fs.mkdirSync(SESSION_DIR, { recursive: true });
-    for (const f in s.data) fs.writeFileSync(path.join(SESSION_DIR, f), s.data[f]);
-    console.log('✅ Session restored from MongoDB');
-    return true;
-}
-
-async function saveSession() {
-    try {
-        if (!fs.existsSync(SESSION_DIR)) return;
-        const data = {};
-        for (const f of fs.readdirSync(SESSION_DIR)) {
-            data[f] = fs.readFileSync(path.join(SESSION_DIR, f), 'utf-8');
-        }
-        await Session.findOneAndUpdate({ sessionId: SESSION_ID }, { data }, { upsert: true });
-        console.log('💾 Session saved');
-    } catch (e) {
-        console.log('Save error:', e.message);
-    }
-}
-
-let saveTimer;
-const debouncedSave = () => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveSession, 5000);
-};
 
 // ================= VOIP =================
 const handled = new Set();      // calls already played / playing (prevents duplicates)
 const pendingOut = new Map();   // outgoing calls waiting for the other side to answer
+let VOIP = null;                // current Voip instance (set after connect)
+let manualDialing = 0;          // .vcall / .acall වලින් යවන calls auto-handler එකෙන් ignore කරන්න
 
 async function runPlayback(voip, sock, callId, isVideo, replyJid) {
     if (handled.has(callId)) return;
@@ -397,6 +353,7 @@ async function setupVoip(sock) {
     catch (e) { console.log('❌ preload video error:', e.message); }
 
     await voip.listen();
+    VOIP = voip;
     console.log('📡 Voip listening');
 
     // call_incoming covers:
@@ -411,6 +368,7 @@ async function setupVoip(sock) {
         const isVideo = call.video === true || call.isVideo === true ||
             /video/i.test(String(call.mediaType ?? call.media ?? call.type ?? ''));
         const outgoing = String(call.direction || '').toLowerCase().includes('out');
+        if (outgoing && manualDialing > 0) return; // .vcall / .acall call එකක්
 
         if (!CALL_ON) {
             console.log('⏸️ auto call OFF → ignore:', from);
@@ -467,6 +425,55 @@ async function setupVoip(sock) {
     return voip;
 }
 
+// ================= MANUAL CALLS (.vcall / .acall) =================
+const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(u || '');
+
+async function dialOut(kind, number, url) {
+    if (!VOIP) throw new Error('Voip තාම ready නෑ. තත්පර කිහිපයකින් නැවත try කරන්න.');
+    const media = url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
+    manualDialing++;
+    let call;
+    try {
+        // video call → video file එක | audio call → audio file එක. ඉවර වුණාම auto hangup
+        call = await VOIP.call(
+            number,
+            media,
+            kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
+            { autoEndCall: true, loop: false },
+        );
+    } finally {
+        setTimeout(() => { manualDialing = Math.max(0, manualDialing - 1); }, 15000);
+    }
+    call.on('error', (e) => console.log(`Manual ${kind} call error:`, e?.message ?? e));
+    call.on('ended', (r) => console.log(`📴 Manual ${kind} call ended:`, r ?? ''));
+    return call;
+}
+
+async function handleDial(sock, m, kind, rawArgs, reply) {
+    const label = kind === 'video' ? 'Video' : 'Audio';
+    const cmd = kind === 'video' ? 'vcall' : 'acall';
+    const number = clean(rawArgs[0] || '');
+    const url = rawArgs[1];
+
+    if (number.length < 8 || number.length > 15) {
+        await reply(`❌ Number එක වැරදියි.\n\n*Use:* \`${prefix}${cmd} 94771234567 ${kind === 'video' ? 'https://site.com/video.mp4' : 'https://site.com/audio.mp3'}\`\n(country code එක්ක, "+" නැතුව)\n\n${texts.footer}`);
+        return;
+    }
+    if (url && !isHttpUrl(url)) {
+        await reply(`❌ URL එක වැරදියි. \`http://\` හෝ \`https://\` වලින් පටන් ගන්න direct link එකක් දෙන්න.\n\n${texts.footer}`);
+        return;
+    }
+
+    await reply(`📞 ${label} call එකක් *${number}* ට යවනවා...\n🔗 ${url || '(default media)'}`);
+    try {
+        await dialOut(kind, number, url);
+        await reply(`✅ ${label} call එක ring වෙනවා → *${number}*\nAnswer කළාම media එක play වෙලා call එක auto end වෙනවා.\n\n${texts.footer}`);
+    } catch (e) {
+        console.log(`${cmd} error:`, e.message);
+        await reply(`⚠️ ${label} call එක යවන්න බැරි වුණා:\n${e.message}\n\n${texts.footer}`);
+    }
+}
+
 // ================= PLUGINS =================
 // Every file in ./plugins (not starting with "_") is loaded as a command.
 const PLUGINS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'plugins');
@@ -504,58 +511,71 @@ async function handleCommand(sock, m) {
         m.message.conversation ||
         m.message.extendedTextMessage?.text ||
         m.message.imageMessage?.caption || '';
-    const text = body.trim().toLowerCase();
-    if (!text.startsWith(prefix)) return;
+    const trimmed = body.trim();
+    if (!trimmed.toLowerCase().startsWith(prefix)) return;
 
-    const [name, arg, extra] = text.slice(prefix.length).split(/\s+/);
+    // URL case-sensitive නිසා name විතරක් lowercase කරනවා
+    const parts = trimmed.slice(prefix.length).split(/\s+/);
+    const name = (parts[0] || '').toLowerCase();
+    const rawArgs = parts.slice(1);
+    const arg = rawArgs[0]?.toLowerCase();
+    const extra = rawArgs[1];
     const jid = m.key.remoteJid;
 
     const isCall = name === 'call' && !extra && (arg === undefined || arg === 'on' || arg === 'off');
     const isMenu = name === 'call-menu' && arg === undefined;
     const isPing = name === 'c-ping' && arg === undefined;
+    const isVcall = name === 'vcall';
+    const isAcall = name === 'acall';
     const plugin = PLUGIN_MAP.get(name);
-    if (!plugin && !isCall && !isMenu && !isPing) return;
+    if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall) return;
 
     const sender = (m.key.participant || jid).split('@')[0].split(':')[0];
     const isOwner = m.key.fromMe || OWNERS.includes(sender);
 
-    // plugins can be public (plugin.ownerOnly = false AND config.publicCommands = true)
+    // plugins public කරන්න පුළුවන් (plugin.ownerOnly = false AND config.publicCommands = true)
     const allowed = isOwner || (plugin && !plugin.ownerOnly && config.publicCommands);
     if (!allowed) {
         await sock.sendMessage(jid, { text: `${texts.ownerOnly}\n\n${texts.footer}` }, { quoted: m });
         return;
     }
 
+    const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
+
+    if (isVcall || isAcall) {
+        await handleDial(sock, m, isVcall ? 'video' : 'audio', rawArgs, reply);
+        return;
+    }
+
     if (plugin) {
-        const rawArgs = body.trim().slice(prefix.length).split(/\s+/).slice(1);
         const ctx = {
             sock, m, jid, config, prefix, isOwner,
             args: rawArgs,
             text: rawArgs.join(' '),
-            reply: (t) => sock.sendMessage(jid, { text: t }, { quoted: m }),
+            reply,
             state: { callOn: CALL_ON, pluginCount: PLUGIN_LIST.length, plugins: PLUGIN_LIST },
         };
         try {
             await plugin.run(ctx);
         } catch (e) {
             console.log(`plugin error (${plugin.name}):`, e.message);
-            try { await ctx.reply(`⚠️ Error in *${prefix}${plugin.name}*: ${e.message}`); } catch {}
+            try { await ctx.reply(`⚠️ *${prefix}${plugin.name}* එකේ error එකක්: ${e.message}`); } catch {}
         }
         return;
     }
 
     if (isMenu) {
-        await sock.sendMessage(jid, { text: MENU_TEXT() }, { quoted: m });
+        await reply(MENU_TEXT());
         return;
     }
 
     if (isCall) {
-        if (arg === 'on') await setCallOn(true);
+        if (arg === 'on') setCallOn(true);
         if (arg === 'off') {
-            await setCallOn(false);
+            setCallOn(false);
             pendingOut.clear();
         }
-        await sock.sendMessage(jid, { text: STATUS_TEXT() }, { quoted: m });
+        await reply(STATUS_TEXT());
         return;
     }
 
@@ -572,51 +592,16 @@ async function handleCommand(sock, m) {
     }
 }
 
-// ================= LOGIN + WEB SERVER =================
-let latestQR = null;
-let latestPairCode = null;
-let isConnected = false;
-let pairRequested = false;
-
+// ================= WEB SERVER (health check only) =================
 function startServer() {
     const app = express();
-    const page = (body, refresh) => `<!doctype html>${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ''}
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<body style="display:grid;place-items:center;height:100vh;margin:0;font-family:sans-serif;background:#0d1117;color:#fff">
-<div style="text-align:center"><h2>📞 ${config.botName}</h2>${body}
-<p style="opacity:.6">Free script • by ${config.ownerName}</p></div></body>`;
-
     app.get('/', (req, res) => res.send(`${config.botName} is running ✅`));
-
-    app.get('/qr', async (req, res) => {
-        if (isConnected) return res.send(page('<h3>✅ Bot is already connected</h3>'));
-
-        if (USE_PAIR) {
-            if (!latestPairCode) return res.send(page('<h3>⏳ Waiting for pairing code...</h3>', 3));
-            return res.send(page(
-                `<h1 style="letter-spacing:6px">${latestPairCode}</h1>
-                 <p>WhatsApp → Linked Devices → Link with phone number instead</p>`, 10));
-        }
-
-        if (!latestQR) return res.send(page('<h3>⏳ Waiting for QR...</h3>', 3));
-        const img = await QRCode.toDataURL(latestQR, { margin: 2, width: 320 });
-        res.send(page(`<img src="${img}" style="border-radius:12px">
-                       <p>WhatsApp → Linked Devices → Link a Device</p>`, 20));
-    });
-
-    app.listen(config.port, () => console.log(`🌐 Server: http://localhost:${config.port}/qr`));
+    app.listen(config.port, () => console.log(`🌐 Server running on port ${config.port}`));
 }
 
 // ================= START =================
 async function start() {
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-
-    if (CI_NO_LOGIN && !state.creds.registered) {
-        console.log(`❌ No saved session found for SESSION_ID="${SESSION_ID}".`);
-        console.log('   Link the bot ONCE on another host (PC / Termux / free host) using the same MONGODB_URI + SESSION_ID,');
-        console.log('   then run this workflow again. (Pairing code is never printed in GitHub logs.)');
-        process.exit(2);
-    }
     const { version } = await fetchLatestBaileysVersion();
     const logger = pino({ level: 'silent' });
 
@@ -631,25 +616,7 @@ async function start() {
         },
     });
 
-    // Pairing code login
-    if (USE_PAIR && !sock.authState.creds.registered && !pairRequested) {
-        pairRequested = true;
-        await sleep(3000);
-        try {
-            const code = await sock.requestPairingCode(NUMBER);
-            latestPairCode = code?.match(/.{1,4}/g)?.join('-') || code;
-            console.log('\n🔑 PAIRING CODE: ' + latestPairCode);
-            console.log('→ WhatsApp → Linked Devices → Link with phone number instead\n');
-        } catch (e) {
-            pairRequested = false;
-            console.log('Pairing code error:', e.message);
-        }
-    }
-
-    sock.ev.on('creds.update', async () => {
-        await saveCreds();
-        debouncedSave();
-    });
+    sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
@@ -663,20 +630,16 @@ async function start() {
 
     let voipReady = false;
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        // QR login
-        if (qr && !USE_PAIR) {
-            latestQR = qr;
-            console.log('📷 Scan this QR (or open /qr in your browser):');
-            qrTerminal.generate(qr, { small: true });
+        // QR එකක් ඉල්ලනවා කියන්නේ session එක invalid. QR / pair code කිසිවිටක් print කරන්නේ නෑ.
+        if (qr) {
+            console.log('❌ Session එක invalid හෝ expire වෙලා. අලුත් SESSION ID එකක් config.js එකේ දාන්න.');
+            fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+            fs.rmSync('./session.src', { force: true });
+            process.exit(1);
         }
 
         if (connection === 'open') {
-            isConnected = true;
-            latestQR = null;
-            latestPairCode = null;
-            pairRequested = false;
             console.log('✅ Connected: ' + sock.user?.id);
-            await saveSession();
             if (!voipReady) {
                 voipReady = true;
                 try { await setupVoip(sock); }
@@ -685,13 +648,13 @@ async function start() {
         }
 
         if (connection === 'close') {
-            isConnected = false;
+            VOIP = null;
+            voipReady = false;
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === DisconnectReason.loggedOut) {
-                console.log('❌ Logged out. Deleting session...');
-                pairRequested = false;
-                await Session.deleteOne({ sessionId: SESSION_ID });
+                console.log('❌ Logged out. අලුත් SESSION ID එකක් config.js එකේ දාන්න.');
                 fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+                fs.rmSync('./session.src', { force: true });
                 process.exit(1);
             }
             console.log('🔄 Reconnecting...');
@@ -703,11 +666,14 @@ async function start() {
 process.on('uncaughtException', (e) => console.log('Uncaught exception:', e?.message ?? e));
 process.on('unhandledRejection', (e) => console.log('Unhandled rejection:', e?.message ?? e));
 
-console.log(`🚀 ${config.botName} v${config.version} | login: ${USE_PAIR ? 'PAIR' : 'QR'} | Free script by ${config.ownerName}`);
-await mongoose.connect(MONGODB_URI);
-console.log('✅ MongoDB connected');
-await restoreSession();
-await loadSettings();
+console.log(`🚀 ${config.botName} v${config.version}`);
+try {
+    await loadSession(config.sessionId, config.sessionApi);
+} catch (e) {
+    console.log('❌ Session error:', e.message);
+    process.exit(1);
+}
+loadSettings();
 await loadPlugins();
 startServer();
 start();
