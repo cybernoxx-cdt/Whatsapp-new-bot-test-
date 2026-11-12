@@ -72,8 +72,8 @@ async function uploadAndSave(ctx, pack, publicOnly = false) {
     // to use gridfs:// internally even when the public host returns 403.
     uploaded = await saveMediaToGridFS(buffer, filename, mime);
     await ctx.reply(publicOnly
-      ? 'ℹ️ Public URL upload failed; media safely saved in MongoDB for calls (internal storage).'
-      : 'ℹ️ External host unavailable; media saved in MongoDB instead (internal storage).');
+      ? 'ℹ️ External host unavailable. Media saved securely in MongoDB and is ready for calls.'
+      : 'ℹ️ External host unavailable. Media saved securely in MongoDB and is ready for calls.');
     console.warn('[MEDIA] External upload fallback to GridFS:', externalError.message);
   }
   const asset = await saveMediaAsset({
