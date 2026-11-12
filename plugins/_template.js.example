@@ -1,0 +1,21 @@
+// Copy this file to plugins/yourcommand.js to make a new command.
+// Restart the bot and it is loaded automatically.
+//
+// Available in run(ctx):
+//   ctx.sock      – Baileys socket          ctx.m        – the incoming message
+//   ctx.jid       – chat id                 ctx.args     – ['word1','word2',...]
+//   ctx.text      – everything after name   ctx.prefix   – command prefix
+//   ctx.config    – config.js               ctx.isOwner  – true / false
+//   ctx.reply(t)  – quoted text reply       ctx.state    – { callOn, pluginCount, plugins }
+
+export default {
+    name: 'hello',            // used as  .hello
+    aliases: ['hi'],          // optional extra names
+    desc: 'Say hello',        // shown in .menu
+    ownerOnly: false,         // true = only owner can use it
+    hidden: false,            // true = hide from .menu
+
+    async run({ reply, args }) {
+        await reply(`Hello ${args[0] || 'there'} 👋`);
+    },
+};
