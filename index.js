@@ -550,6 +550,7 @@ async function wipeSession() {
 const handled = new Set();      // calls already played / playing (prevents duplicates)
 const pendingOut = new Map();   // outgoing calls waiting for the other side to answer
 let VOIP = null;                // current Voip instance (set after connect)
+let voipInitPromise = null;     // resolves only after Voip.listen() succeeds
 let manualDialing = 0;          // .vcall / .acall වලින් යවන calls auto-handler එකෙන් ignore කරන්න
 
 async function runPlayback(voip, sock, callId, isVideo, replyJid, mediaUrl) {
@@ -709,24 +710,43 @@ async function setupVoip(sock) {
 const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(u || '');
 
 async function dialOut(kind, number, url) {
-    if (!VOIP) throw new Error('Voip තාම ready නෑ. තත්පර කිහිපයකින් නැවත try කරන්න.');
-
-    // Prefer the latest public .tourl upload. Do not silently use a stale config URL.
-    let latestUpload = null;
-    if (!url) {
-        try { latestUpload = await getPackMedia('uploads', kind); }
-        catch (e) { console.warn('[MEDIA] Could not read uploads pack:', e.message); }
+    // GitHub Actions can receive a command just after WhatsApp connects but
+    // before Voip.listen() has finished. Wait for readiness instead of failing.
+    const readyDeadline = Date.now() + 30000;
+    while (!VOIP && Date.now() < readyDeadline) {
+        if (voipInitPromise) {
+            try { await Promise.race([voipInitPromise, sleep(1000)]); } catch {}
+        } else {
+            await sleep(500);
+        }
     }
-    const src = url || latestUpload?.url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
+    if (!VOIP) throw new Error('Voip initialize වුණේ නැහැ. Logs වල "Voip setup error" හෝ "Voip listening" පරීක්ෂා කරන්න.');
+
+    // Prefer the most recent .tourl upload when no URL was supplied.
+    let latestUpload = null;
+    try { latestUpload = await getPackMedia('uploads', kind); }
+    catch (e) { console.warn('[MEDIA] Could not read uploads pack:', e.message); }
+
+    const defaultUrl = latestUpload?.url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
+    let src = url || defaultUrl;
+    let source = url ? 'command URL' : latestUpload?.url ? 'latest .tourl upload' : 'config default';
     if (!src) throw new Error('Media URL එකක් නැහැ. Media එකකට reply කර .tourl යවන්න.');
 
-    const source = url ? 'command URL' : latestUpload?.url ? 'latest .tourl upload' : 'config default';
     console.log('[MEDIA] Source:', source);
-    if (source === 'config default') {
-        console.warn('[MEDIA] No .tourl upload found. Using config default URL.');
+    let prepared;
+    try {
+        prepared = await prepareMedia(src, kind === 'video');
+    } catch (error) {
+        // If an explicitly supplied host rejects the file (403/404), recover
+        // using the latest media that .tourl uploaded and saved in MongoDB.
+        const rejected = /HTTP (401|403|404|410)|not publicly downloadable|HTML page instead/i.test(error.message);
+        if (!rejected || !latestUpload?.url || latestUpload.url === src) throw error;
+        console.warn('[MEDIA] Supplied URL rejected; retrying latest .tourl upload.');
+        src = latestUpload.url;
+        source = 'latest .tourl upload (fallback)';
+        console.log('[MEDIA] Source:', source);
+        prepared = await prepareMedia(src, kind === 'video');
     }
-
-    const prepared = await prepareMedia(src, kind === 'video');
     console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file);
 
     // Let @dnuzi/baileys own call signaling, media playback and auto-end.
@@ -987,13 +1007,20 @@ async function start() {
             await saveSession();
             if (!voipReady) {
                 voipReady = true;
-                try { await setupVoip(sock); }
-                catch (e) { console.log('Voip setup error:', e.message); }
+                voipInitPromise = setupVoip(sock).catch((e) => {
+                    VOIP = null;
+                    voipReady = false;
+                    console.log('Voip setup error:', e.message);
+                    throw e;
+                });
+                try { await voipInitPromise; }
+                catch {}
             }
         }
 
         if (connection === 'close') {
             VOIP = null;
+            voipInitPromise = null;
             voipReady = false;
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === DisconnectReason.loggedOut) {
