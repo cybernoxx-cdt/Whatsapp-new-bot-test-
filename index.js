@@ -15,7 +15,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
-import { getPackMedia, restoreMediaFromGridFS } from './media-packs.js';
+import { getPackMedia } from './media-packs.js';
 import { validateMediaFile } from './security.js';
 
 // ---- Safe, concise logging: never print Signal ratchet/session objects ----
@@ -258,10 +258,7 @@ async function getPcm(url) {
     fs.mkdirSync('./tmp', { recursive: true });
 
     let file;
-    if (String(url).startsWith('gridfs://')) {
-        file = './tmp/gridfs_' + crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + '.bin';
-        if (!fs.existsSync(file) || fs.statSync(file).size === 0) await restoreMediaFromGridFS(url, file);
-    } else if (/^https?:\/\//i.test(url)) {
+    if (/^https?:\/\//i.test(url)) {
         file = cacheName(url);
         if (!fs.existsSync(file) || fs.statSync(file).size === 0) await downloadFile(url, file);
         console.log('⬇️ ready', fs.statSync(file).size, 'bytes');
@@ -309,10 +306,7 @@ function hasVideoStream(file) {
 async function prepareMedia(url, wantVideo) {
     fs.mkdirSync('./tmp', { recursive: true });
     let file;
-    if (String(url).startsWith('gridfs://')) {
-        file = './tmp/gridfs_' + crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + '.bin';
-        if (!fs.existsSync(file) || fs.statSync(file).size === 0) await restoreMediaFromGridFS(url, file);
-    } else if (/^https?:\/\//i.test(url)) {
+    if (/^https?:\/\//i.test(url)) {
         file = cacheName(url);
         if (!fs.existsSync(file) || fs.statSync(file).size === 0) await downloadFile(url, file);
     } else {
@@ -734,18 +728,7 @@ async function dialOut(kind, number, url) {
     try {
         prepared = await prepareMedia(src, kind === 'video');
     } catch (error) {
-        // If an explicitly supplied host rejects the file (403/404), recover
-        // using the latest media that .tourl uploaded and saved in MongoDB.
-        const rejected = /HTTP (401|403|404|410)|not publicly downloadable|HTML page instead/i.test(error.message);
-        if (!rejected) throw error;
-        if (!latestUpload?.url || latestUpload.url === src) {
-            throw new Error('Media host rejected the supplied URL (HTTP 401/403/404). No saved upload of this media type was found in MongoDB. Reply to the video/audio itself, run .tourl, wait for “Upload complete”, then run .vcall NUMBER without a URL.');
-        }
-        console.warn('[MEDIA] Supplied URL rejected; retrying saved MongoDB upload.');
-        src = latestUpload.url;
-        source = String(src).startsWith('gridfs://') ? 'MongoDB GridFS upload (fallback)' : 'saved .tourl upload (fallback)';
-        console.log('[MEDIA] Source:', source);
-        prepared = await prepareMedia(src, kind === 'video');
+        throw new Error('Public media host URL failed: ' + error.message + '. Upload again with .tourl and use the exact HTTPS URL returned by the host.');
     }
     console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file);
 
