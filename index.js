@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
 import { getPackMedia, restoreMediaFromGridFS } from './media-packs.js';
+import { validateMediaFile } from './security.js';
 
 // ---- Safe, concise logging: never print Signal ratchet/session objects ----
 const _rawLog = console.log.bind(console);
@@ -318,10 +319,16 @@ async function prepareMedia(url, wantVideo) {
         file = url;
         if (!fs.existsSync(file)) throw new Error('local file not found: ' + file);
     }
-    if (!wantVideo) return { file: path.resolve(file), kind: 'audio' };
+    // Validate container and stream metadata before handing media to FFmpeg/VoIP.
+    const inspection = await validateMediaFile(file, { ffprobe: FFPROBE, maxBytes: 150 * 1024 * 1024, maxDurationSeconds: 900 });
+    if (!wantVideo) {
+        if (!inspection.hasAudio) throw new Error('Media file does not contain an audio stream.');
+        return { file: path.resolve(file), kind: 'audio' };
+    }
 
-    if (!(await hasVideoStream(file))) {
-        console.log('⚠️ this link has no video stream → audio only');
+    if (!inspection.hasVideo) {
+        if (!inspection.hasAudio) throw new Error('Media file has neither a supported video nor audio stream.');
+        console.log('⚠️ No video stream found; using validated audio stream.');
         return { file: path.resolve(file), kind: 'audio' };
     }
     try {
@@ -732,7 +739,7 @@ async function dialOut(kind, number, url) {
         const rejected = /HTTP (401|403|404|410)|not publicly downloadable|HTML page instead/i.test(error.message);
         if (!rejected) throw error;
         if (!latestUpload?.url || latestUpload.url === src) {
-            throw new Error('Supplied media URL was rejected by its host (HTTP 403/404). First reply to the actual video/audio and run .tourl; wait for “Upload complete”, then run .vcall NUMBER without a URL. MongoDB internal uploads are supported; a gridfs:// link is not a public URL.');
+            throw new Error('Media host rejected the supplied URL (HTTP 401/403/404). No saved upload of this media type was found in MongoDB. Reply to the video/audio itself, run .tourl, wait for “Upload complete”, then run .vcall NUMBER without a URL.');
         }
         console.warn('[MEDIA] Supplied URL rejected; retrying saved MongoDB upload.');
         src = latestUpload.url;
@@ -747,7 +754,6 @@ async function dialOut(kind, number, url) {
     // Manual coordinator playback raced the library's own call media pipeline
     // and could leave the peer stuck at "Connecting".
     const media = prepared.kind === 'video' ? prepared.file : { audio: prepared.file };
-    const callIdHint = 'pending';
     console.log(`📞 Starting outgoing ${kind} call to ${number}`);
 
     const call = await VOIP.call(
