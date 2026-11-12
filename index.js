@@ -17,6 +17,34 @@ import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
 import { getPackMedia } from './media-packs.js';
 
+// ---- Bounded, deduplicated logs: prevent repeated crypto/library noise filling CI logs ----
+const _log = console.log.bind(console);
+const _warn = console.warn.bind(console);
+const _error = console.error.bind(console);
+const _logSeen = new Map();
+function _shouldPrint(args) {
+    const line = args.map(v => typeof v === 'string' ? v : (v?.message || '')).join(' ');
+    // Bad MAC is a per-message decrypt failure from stale/rotated Signal sessions.
+    // Keep one concise diagnostic per 10 minutes, never dump repeated stacks.
+    const key = /Bad MAC|Failed to decrypt message with any known session/i.test(line)
+        ? 'baileys-bad-mac'
+        : /Session saved to MongoDB/i.test(line) ? 'session-saved'
+        : null;
+    if (!key) return true;
+    const now = Date.now(), last = _logSeen.get(key) || 0;
+    const interval = key === 'session-saved' ? 60000 : 600000;
+    if (now - last < interval) return false;
+    _logSeen.set(key, now);
+    if (key === 'baileys-bad-mac') {
+        _log('⚠️ Baileys decrypt warning (Bad MAC). Repeated copies suppressed; check for stale/mismatched auth keys.');
+        return false;
+    }
+    return true;
+}
+console.log = (...a) => { if (_shouldPrint(a)) _log(...a); };
+console.warn = (...a) => { if (_shouldPrint(a)) _warn(...a); };
+console.error = (...a) => { if (_shouldPrint(a)) _error(...a); };
+
 // ---- GitHub Actions: logs වල phone numbers hide කරනවා ----
 if (process.env.GITHUB_ACTIONS) {
     const orig = console.log;
@@ -428,24 +456,41 @@ async function restoreSession(st) {
 }
 
 async function saveSession() {
-    if (!dbOn()) return;
+    if (!dbOn() || saveInFlight) return;
     try {
         if (!fs.existsSync(SESSION_DIR)) return;
         const data = {};
         for (const f of fs.readdirSync(SESSION_DIR)) {
-            data[f] = fs.readFileSync(path.join(SESSION_DIR, f), 'utf-8');
+            const full = path.join(SESSION_DIR, f);
+            if (fs.statSync(full).isFile() && f.endsWith('.json')) data[f] = fs.readFileSync(full, 'utf-8');
         }
-        await Session.findOneAndUpdate({ sessionId: SESSION_KEY }, { data, src: CURRENT_SRC }, { upsert: true });
+        const digest = crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
+        if (digest === lastSavedDigest) return;
+        // Avoid hammering MongoDB while credentials are rotating rapidly.
+        if (Date.now() - lastSaveAt < 10000) { debouncedSave(); return; }
+        saveInFlight = true;
+        await Session.findOneAndUpdate(
+            { sessionId: SESSION_KEY },
+            { $set: { data, src: CURRENT_SRC, updatedAt: new Date() } },
+            { upsert: true, setDefaultsOnInsert: true }
+        );
+        lastSavedDigest = digest;
+        lastSaveAt = Date.now();
         console.log('💾 Session saved to MongoDB');
     } catch (e) {
         console.log('Session save error:', e.message);
+    } finally {
+        saveInFlight = false;
     }
 }
 
 let saveTimer;
+let saveInFlight = false;
+let lastSavedDigest = '';
+let lastSaveAt = 0;
 const debouncedSave = () => {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveSession, 5000);
+    saveTimer = setTimeout(saveSession, 15000);
 };
 
 async function wipeSession() {
@@ -813,9 +858,13 @@ function startServer() {
 // ================= START =================
 let pairRequested = false;
 let pairAttempts = 0;
+let reconnectTimer = null;
+let starting = false;
 const MAX_PAIR_CODES = 6;
 
 async function start() {
+    if (starting) return;
+    starting = true;
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
     const logger = pino({ level: 'silent' });
@@ -852,7 +901,7 @@ async function start() {
     }
 
     sock.ev.on('creds.update', async () => {
-        await saveCreds();
+        try { await saveCreds(); } catch (e) { console.log('Credentials write error:', e.message); }
         debouncedSave();
     });
 
@@ -869,6 +918,8 @@ async function start() {
     let voipReady = false;
     sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
         if (connection === 'open') {
+            starting = false;
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
             pairRequested = false;
             pairAttempts = 0;
             console.log('✅ Connected: ' + sock.user?.id);
@@ -897,8 +948,11 @@ async function start() {
                     process.exit(1);
                 }
             }
-            console.log('🔄 Reconnecting...');
-            setTimeout(start, 3000);
+            starting = false;
+            if (!reconnectTimer) reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                start().catch(e => { starting = false; console.log('Restart error:', e.message); });
+            }, 5000);
         }
     });
 }
