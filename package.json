@@ -1,7 +1,7 @@
 {
   "name": "god-voip-md",
   "version": "1.0.0",
-  "description": "GOD VOIP MD - WhatsApp auto call bot with .vcall / .acall. Session from config.js.",
+  "description": "GOD VOIP MD - WhatsApp auto call bot with .vcall / .acall. Pair code in logs, session saved in MongoDB.",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -28,6 +28,7 @@
     "jimp": "^1.6.1",
     "pino": "^8.16.1",
     "sharp": "^0.34.5",
-    "megajs": "^1.3.0"
+    "megajs": "^1.3.0",
+    "mongoose": "^8.0.0"
   }
 }
