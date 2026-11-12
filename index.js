@@ -710,56 +710,49 @@ const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(u || '');
 
 async function dialOut(kind, number, url) {
     if (!VOIP) throw new Error('Voip තාම ready නෑ. තත්පර කිහිපයකින් නැවත try කරන්න.');
-    // Prefer the newest .tourl upload when caller omits an explicit URL.
-    // This prevents silently reusing an expired/403 legacy config media URL.
+
+    // Prefer the latest public .tourl upload. Do not silently use a stale config URL.
     let latestUpload = null;
     if (!url) {
         try { latestUpload = await getPackMedia('uploads', kind); }
-        catch (e) { console.warn('[MEDIA] Could not read latest uploads pack:', e.message); }
+        catch (e) { console.warn('[MEDIA] Could not read uploads pack:', e.message); }
     }
     const src = url || latestUpload?.url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
-    if (!src) throw new Error('Media URL එකක් නැහැ. Media එකකට reply කර .tourl යවලා නැවත .vcall / .acall කරන්න.');
-    console.log('[MEDIA] Source:', url ? 'command URL' : latestUpload?.url ? 'latest .tourl upload' : 'config default');
+    if (!src) throw new Error('Media URL එකක් නැහැ. Media එකකට reply කර .tourl යවන්න.');
 
-    // Download + convert ourselves, so the library never guesses "audio" from the URL.
-    const prepared = await prepareMedia(src, kind === 'video');
-    console.log(`📦 ${kind} call media:`, prepared.kind, prepared.file);
-    // { video: file } forces VIDEO; autoAdvance makes the library end the call when the video finishes
-    // @dnuzi/baileys documents video calls as a direct file path + resolution.
-    // Keep the audio object form for audio calls; do not wrap video in an
-    // undocumented { video, autoAdvance } object.
-    const media = prepared.kind === 'video'
-        ? prepared.file
-        : { audio: prepared.file };
-
-    manualDialing++;
-    let call;
-    try {
-        call = await VOIP.call(
-            number,
-            media,
-            prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
-            CALL_OPTS,
-        );
-    } finally {
-        setTimeout(() => { manualDialing = Math.max(0, manualDialing - 1); }, 15000);
+    const source = url ? 'command URL' : latestUpload?.url ? 'latest .tourl upload' : 'config default';
+    console.log('[MEDIA] Source:', source);
+    if (source === 'config default') {
+        console.warn('[MEDIA] No .tourl upload found. Using config default URL.');
     }
+
+    const prepared = await prepareMedia(src, kind === 'video');
+    console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file);
+
+    // Let @dnuzi/baileys own call signaling, media playback and auto-end.
+    // Its documented API accepts a local file path and a resolution for video.
+    // Manual coordinator playback raced the library's own call media pipeline
+    // and could leave the peer stuck at "Connecting".
+    const media = prepared.kind === 'video' ? prepared.file : { audio: prepared.file };
+    const callIdHint = 'pending';
+    console.log(`📞 Starting outgoing ${kind} call to ${number}`);
+
+    const call = await VOIP.call(
+        number,
+        media,
+        prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
+        { ...CALL_OPTS, autoEndCall: true, loop: false },
+    );
+
     const callId = call?.callId ?? call?.id;
-    if (!callId) throw new Error('VOIP.call() did not return a callId; check signaling logs.');
-    pendingOut.set(callId, { isVideo: kind === 'video', replyJid: null, mediaUrl: src });
+    console.log('📡 VOIP.call returned:', callId || 'no callId', '| target:', call?.target || number);
+    if (!callId) throw new Error('VOIP.call() did not return a callId; inspect VOIP call_error logs.');
+
     watchCall(call, `manual ${kind}`);
-    call.on('connected', () => {
-        const info = pendingOut.get(callId);
-        if (!info) return;
-        pendingOut.delete(callId);
-        runPlayback(VOIP, null, callId, info.isVideo, null, info.mediaUrl)
-            .catch(e => console.log('Manual playback error:', e?.message ?? e));
-    });
-    call.on('error', (e) => console.log(`Manual ${kind} call error:`, e?.message ?? e));
-    call.on('ended', (r) => {
-        pendingOut.delete(callId);
-        console.log(`📴 Manual ${kind} call ended:`, r ?? '');
-    });
+    call.on('ringing', () => console.log(`📳 ${kind} call is ringing:`, callId));
+    call.on('connected', () => console.log(`✅ ${kind} call connected:`, callId));
+    call.on('ended', (reason) => console.log(`📴 ${kind} call ended:`, reason || ''));
+    call.on('error', (error) => console.error(`❌ ${kind} call error:`, error?.message || error));
     return call;
 }
 
