@@ -1,0 +1,73 @@
+name: SHAVIYA-XMD
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  # Auto re-trigger if workflow finishes/fails (keeps bot alive longer)
+  schedule:
+    - cron: "0 */5 * * *"   # every 5 hours re-check / restart job
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    # GitHub free runners max ~6 hours per job
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Bot
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Dependencies
+        run: |
+          npm install --omit=dev
+          # optional: rebuild native deps if needed
+          # npm rebuild
+
+      - name: Start Bot (auto restart forever)
+        env:
+          # Secrets → GitHub repo → Settings → Secrets and variables → Actions
+          SESSION_ID: ${{ secrets.SESSION_ID }}
+          OWNER_NUMBER: ${{ secrets.OWNER_NUMBER }}
+          PREFIX: ${{ secrets.PREFIX }}
+          MODE: ${{ secrets.MODE }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+        run: |
+          echo "================================="
+          echo " SHAVIYA-XMD — Auto Restart"
+          echo "================================="
+
+          RESTART_COUNT=0
+
+          while true; do
+            RESTART_COUNT=$((RESTART_COUNT + 1))
+            echo ""
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Start #$RESTART_COUNT"
+            echo "---------------------------------"
+
+            # Run bot — if crash/exit, loop continues
+            node index.js
+            EXIT_CODE=$?
+
+            echo "---------------------------------"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bot stopped | Exit: $EXIT_CODE"
+
+            # Exit codes you may want to STOP restarting (optional)
+            # 42 = manual stop signal you define in code
+            if [ "$EXIT_CODE" -eq 42 ]; then
+              echo "Manual stop requested (exit 42). Exiting workflow."
+              exit 0
+            fi
+
+            # Fast crash protection — if dies under 15s, wait longer
+            echo "Restarting in 10 seconds..."
+            sleep 10
+          done
