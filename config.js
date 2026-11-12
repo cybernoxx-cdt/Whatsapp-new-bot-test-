@@ -11,7 +11,7 @@ export default {
     repoUrl: '',
 
     // WhatsApp number in international format, digits only.
-    number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '',
+    number: process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '94707085822',
 
     // Set these in GitHub Actions Secrets. Never commit credentials.
     mongodbUri: process.env.MONGODB_URI || '',
@@ -22,7 +22,7 @@ export default {
     // A short pairing-code fragment such as "shavi&" is NOT a session.
     sessionId: process.env.SESSION_ID || '',
 
-    owners: process.env.OWNER_NUMBER ? [process.env.OWNER_NUMBER] : [],
+    owners: process.env.OWNER_NUMBER ? [process.env.OWNER_NUMBER] : ['94707085822'],
     port: process.env.PORT || 8000,
     prefix: process.env.PREFIX || '.',
     publicCommands: false,
