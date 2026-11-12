@@ -11,21 +11,24 @@ export default {
     ownerUrl: '',
     repoUrl: '',
 
-    // ---------- SESSION ID (මෙතනට paste කරන්න) ----------
-    // Deploy කරද්දී bot එක මේ session එකෙන් කෙලින්ම login වෙනවා.
-    // Pair code / QR logs වල කිසිම තැනක පෙන්නන්නේ නෑ.
-    // Heroku වල නම් SESSION_ID config var එකත් පාවිච්චි කරන්න පුළුවන් (ඒකට priority).
-    sessionId: process.env.SESSION_ID || '𝙰𝚂𝙸𝚃𝙷𝙰-𝙼𝙳=e00415e12af99365',
-
-    // Session ID එක කෙටි id එකක් (උදා: xxxx=e00415e12af99365) නම්, ඒක ගන්න පුළුවන්
-    // server එකේ URL එක මෙතන දාන්න. {id} කියන තැනට id එක ආදේශ වෙනවා.
-    // උදා: 'https://your-session-server.com/session/{id}'
-    // (Base64 / MEGA link session නම් මේක හිස්ව තියන්න)
-    sessionApi: process.env.SESSION_API || '',
-
-    // ---------- Account ----------
-    // Main owner number (country code, "+" නැතුව). Session එකේ number එක නෙවෙයි නම් මෙතන දාන්න.
+    // ---------- Account / Login ----------
+    // Bot number (country code, "+" නැතුව). Session නැති පළමු deploy එකේදී
+    // මේ number එකට PAIR CODE එක logs වල auto පෙන්වනවා.
+    // WhatsApp → Linked Devices → Link with phone number instead → code එක ගහන්න.
     number: process.env.BOT_NUMBER || '94707085822',
+
+    // ---------- Database (session save කරන්න) ----------
+    // Pair වුණාට පස්සේ session එක MongoDB එකේ save වෙනවා, restart වුණාම auto login.
+    // MONGODB_URI env var එකක් විදිහට හෝ මෙතන paste කරන්න.
+    mongodbUri: process.env.MONGODB_URI || 'mongodb+srv://cloud25588_db_user:RQxEbZhj74uGOtb4@cluster0.pptbqdr.mongodb.net/nsero78?appName=Cluster',
+    sessionKey: process.env.SESSION_KEY || 'god-voip-md',   // MongoDB එකේ session නම
+
+    // ---------- SESSION ID (optional) ----------
+    // මෙතනට දාන්න පුළුවන්: Base64 session | creds.json content | MEGA link
+    // (prefix එකක් තිබුණත් කමක් නෑ, උදා: NAME=eyJ...)
+    // දාලා තියෙනවා නම් pair code එකක් නැතුව කෙලින්ම ඒ session එකෙන් connect වෙලා වැඩ කරනවා.
+    // හිස් නම් MongoDB session එක / pair code පාවිච්චි වෙනවා.
+    sessionId: process.env.SESSION_ID || 'shavi&jvp31JJY#0mpvVhfBMtzjycGuI9B__Vut9Eelo8bwBg2wyYYgzGI',
 
     // Extra owners (optional)
     owners: [],
