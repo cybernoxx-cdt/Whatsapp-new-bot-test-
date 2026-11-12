@@ -7,6 +7,7 @@ import * as B from '@dnuzi/baileys';
 import Voip from '@dnuzi/baileys/voip';
 import pino from 'pino';
 import fs from 'fs';
+import crypto from 'crypto';
 import path from 'path';
 import mongoose from 'mongoose';
 import express from 'express';
@@ -184,7 +185,7 @@ async function getPcm(url) {
 
     let file;
     if (/^https?:\/\//i.test(url)) {
-        file = './tmp/media_' + Buffer.from(url).toString('hex').slice(-16) + (path.extname(new URL(url).pathname) || '.bin');
+        file = cacheName(url);
         if (!fs.existsSync(file) || fs.statSync(file).size === 0) await downloadFile(url, file);
         console.log('⬇️ ready', fs.statSync(file).size, 'bytes');
     } else {
@@ -207,6 +208,49 @@ async function getPcm(url) {
     fileCache.set(url, path.resolve(file));
     if (pcm.length > 0) pcmCache.set(url, pcm);
     return pcm;
+}
+
+// unique, collision-free cache file name for a URL
+function cacheName(url) {
+    const ext = (path.extname(new URL(url).pathname) || '.bin').slice(0, 8);
+    return './tmp/media_' + crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + ext;
+}
+
+// does this file really contain a video stream?
+function hasVideoStream(file) {
+    return new Promise((resolve) => {
+        const p = spawn(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file]);
+        let out = '';
+        p.stdout.on('data', d => out += d);
+        p.on('error', () => resolve(false));
+        p.on('close', () => resolve(/video/.test(out)));
+    });
+}
+
+// download (if URL) + for video: convert to a call-friendly local .mp4.
+// Returns { file, kind } where kind is 'video' or 'audio' (decided from the REAL file content, not the URL extension).
+async function prepareMedia(url, wantVideo) {
+    fs.mkdirSync('./tmp', { recursive: true });
+    let file;
+    if (/^https?:\/\//i.test(url)) {
+        file = cacheName(url);
+        if (!fs.existsSync(file) || fs.statSync(file).size === 0) await downloadFile(url, file);
+    } else {
+        file = url;
+        if (!fs.existsSync(file)) throw new Error('local file not found: ' + file);
+    }
+    if (!wantVideo) return { file: path.resolve(file), kind: 'audio' };
+
+    if (!(await hasVideoStream(file))) {
+        console.log('⚠️ this link has no video stream → audio only');
+        return { file: path.resolve(file), kind: 'audio' };
+    }
+    try {
+        file = await makeCallVideo(file);
+    } catch (e) {
+        console.log('video convert error (using original):', e.message);
+    }
+    return { file: path.resolve(file), kind: 'video' };
 }
 
 async function playAudioOnCall(voip, callId, url) {
@@ -495,15 +539,21 @@ const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(u || '');
 
 async function dialOut(kind, number, url) {
     if (!VOIP) throw new Error('Voip තාම ready නෑ. තත්පර කිහිපයකින් නැවත try කරන්න.');
-    const media = url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
+    const src = url || (kind === 'video' ? VIDEO_URL : AUDIO_URL);
+
+    // Download + convert ourselves, so the library never guesses "audio" from the URL.
+    const prepared = await prepareMedia(src, kind === 'video');
+    console.log(`📦 ${kind} call media:`, prepared.kind, prepared.file);
+    // { video: file } forces the library to treat it as VIDEO (sound AND picture)
+    const media = prepared.kind === 'video' ? { video: prepared.file } : { audio: prepared.file };
+
     manualDialing++;
     let call;
     try {
-        // video call → video file එක | audio call → audio file එක. ඉවර වුණාම auto hangup
         call = await VOIP.call(
             number,
             media,
-            kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
+            prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
             { autoEndCall: true, loop: false },
         );
     } finally {
