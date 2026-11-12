@@ -713,31 +713,56 @@ async function dialOut(kind, number, url) {
     }
     if (!VOIP) throw new Error('Voip initialize වුණේ නැහැ. Logs වල "Voip setup error" හෝ "Voip listening" පරීක්ෂා කරන්න.');
 
-    // Explicit command URL wins. For a bare .acall/.vcall, use config first.
-    // Old GridFS/local references are filtered out by getPackMedia().
+    // Explicit URL wins. Without one, prefer the newest .tourl upload;
+    // use config only as a fallback. This avoids stale DEFAULT_AUDIO_URL values
+    // shadowing a freshly uploaded public media file.
     const configuredUrl = kind === 'video' ? VIDEO_URL : AUDIO_URL;
-    let src = url || configuredUrl;
-    let source = url ? 'command URL' : configuredUrl ? 'config default' : 'latest public .tourl upload';
-
-    if (!src) {
-        let latestUpload = null;
-        try { latestUpload = await getPackMedia('uploads', kind); }
-        catch (e) { console.warn('[MEDIA] Could not read public uploads:', e.message); }
-        src = latestUpload?.url || '';
+    const candidates = [];
+    if (url) {
+        candidates.push({ url, source: 'command URL' });
+    } else {
+        try {
+            const latestUpload = await getPackMedia('uploads', kind);
+            if (latestUpload?.url) candidates.push({ url: latestUpload.url, source: 'latest .tourl upload' });
+        } catch (e) {
+            console.warn('[MEDIA] Could not read public uploads:', e.message);
+        }
+        if (configuredUrl && !candidates.some(item => item.url === configuredUrl)) {
+            candidates.push({ url: configuredUrl, source: 'config default' });
+        }
     }
-    if (!src) {
+
+    if (!candidates.length) {
         const secretName = kind === 'audio' ? 'DEFAULT_AUDIO_URL' : 'DEFAULT_VIDEO_URL';
-        throw new Error(`Default ${kind} media is not configured. Add ${secretName} in GitHub Actions Secrets, or upload a public HTTPS file with .tourl.`);
+        throw new Error(`No ${kind} media found. Reply to a file and run .tourl, or configure ${secretName}.`);
     }
-    if (!isHttpUrl(src)) throw new Error('Only a public HTTP/HTTPS media URL is supported. Legacy gridfs:// references are disabled.');
 
-    console.log('[MEDIA] Source:', source);
     let prepared;
-    try {
-        prepared = await prepareMedia(src, kind === 'video');
-    } catch (error) {
-        throw new Error('Public media host URL failed: ' + error.message + '. Upload again with .tourl and use the exact HTTPS URL returned by the host.');
+    let selectedSource = '';
+    const failures = [];
+    for (const candidate of candidates) {
+        if (!isHttpUrl(candidate.url)) {
+            failures.push(`${candidate.source}: invalid HTTP(S) URL`);
+            continue;
+        }
+        console.log('[MEDIA] Checking source:', candidate.source);
+        try {
+            prepared = await prepareMedia(candidate.url, kind === 'video');
+            selectedSource = candidate.source;
+            break;
+        } catch (error) {
+            failures.push(`${candidate.source}: ${error.message}`);
+            console.warn('[MEDIA] Source unavailable; trying next configured source:', error.message);
+            // Explicit URLs are intentional; never silently substitute another file.
+            if (url) break;
+        }
     }
+
+    if (!prepared) {
+        throw new Error('No publicly downloadable media source worked. ' + failures.join(' | ') +
+            '. Re-upload with .tourl; the upload is now checked for public access before it is saved.');
+    }
+    console.log('[MEDIA] Source selected:', selectedSource);
     console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file);
 
     // Let @dnuzi/baileys own call signaling, media playback and auto-end.
