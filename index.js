@@ -201,27 +201,56 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
 async function downloadFile(url, file) {
-    // also try the direct raw.githubusercontent.com link (skips one redirect)
-    const direct = url.startsWith('https://github.com/')
-        ? url.replace('https://github.com/', 'https://raw.githubusercontent.com/').replace('/raw/refs/heads/', '/refs/heads/')
-        : url;
+    // A 403/401/404 is a permanent origin response, not a transient network
+    // failure. Retrying it three times only spams logs and wastes call setup time.
+    const candidates = [url];
+    if (url.startsWith('https://github.com/') && url.includes('/raw/')) {
+        candidates.push(url.replace('https://github.com/', 'https://raw.githubusercontent.com/').replace('/raw/refs/heads/', '/refs/heads/'));
+    }
 
     let lastErr;
-    for (const u of new Set([url, direct])) {
-        for (let i = 1; i <= 3; i++) {
+    for (const candidate of [...new Set(candidates)]) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            let response;
             try {
-                const res = await fetch(u, { redirect: 'follow', headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(45000) });
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+                response = await fetch(candidate, {
+                    redirect: 'follow',
+                    headers: { 'User-Agent': UA, Accept: 'video/mp4,audio/*,application/octet-stream,*/*' },
+                    signal: AbortSignal.timeout(60000),
+                });
+
+                if ([401, 403, 404, 410].includes(response.status)) {
+                    throw Object.assign(new Error(`HTTP ${response.status} - media host denied access or the link is unavailable`), { permanent: true });
+                }
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+
+                const contentType = (response.headers.get('content-type') || '').toLowerCase();
+                const data = Buffer.from(await response.arrayBuffer());
+                if (!data.length) throw new Error('empty response');
+                if (data.length > 250 * 1024 * 1024) throw new Error('media exceeds 250 MB limit');
+                if (contentType.includes('text/html') || data.subarray(0, 100).toString('utf8').toLowerCase().includes('<!doctype html')) {
+                    throw Object.assign(new Error('host returned an HTML page instead of a media file'), { permanent: true });
+                }
+
+                const tempFile = file + '.part';
+                fs.writeFileSync(tempFile, data);
+                fs.renameSync(tempFile, file);
                 return;
             } catch (e) {
                 lastErr = e;
-                console.log(`⚠️ download try ${i} failed (${u.slice(0, 60)}...): ${e.message}`);
-                await sleep(1500 * i);
+                try { fs.rmSync(file + '.part', { force: true }); } catch {}
+                const permanent = e.permanent || /HTTP (401|403|404|410)/.test(e.message) || /HTML page instead of a media file/.test(e.message);
+                console.log(`⚠️ [MEDIA] Download ${permanent ? 'rejected' : 'failed'}: ${e.message}`);
+                if (permanent) {
+                    throw new Error(`Media URL is not publicly downloadable (${e.message}). Replace it with a public direct media URL or re-upload the file using .addpack/.tourl.`);
+                }
+                if (attempt < 3) await sleep(1200 * attempt);
             }
         }
     }
-    throw new Error('download failed: ' + lastErr.message);
+    throw new Error('Media download failed after temporary network retries: ' + (lastErr?.message || 'unknown error'));
 }
 
 async function getPcm(url) {
