@@ -73,7 +73,7 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
   // Prefer a canonical public URL returned by completion; otherwise use the
   // exact URL from presign. Never rewrite or reconstruct a host-issued URL.
   const publicUrl = completed?.url || completed?.publicUrl || completed?.public_url || presign.url;
-  if (!/^https:\\/\\//i.test(String(publicUrl || ''))) {
+  if (!String(publicUrl || '').toLowerCase().startsWith('https://')) {
     throw new Error('Upload host did not return a valid public HTTPS media URL.');
   }
 
