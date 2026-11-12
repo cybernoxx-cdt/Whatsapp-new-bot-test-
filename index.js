@@ -728,8 +728,11 @@ async function dialOut(kind, number, url) {
     const prepared = await prepareMedia(src, kind === 'video');
     console.log(`📦 ${kind} call media:`, prepared.kind, prepared.file);
     // { video: file } forces VIDEO; autoAdvance makes the library end the call when the video finishes
+    // @dnuzi/baileys documents video calls as a direct file path + resolution.
+    // Keep the audio object form for audio calls; do not wrap video in an
+    // undocumented { video, autoAdvance } object.
     const media = prepared.kind === 'video'
-        ? { video: prepared.file, autoAdvance: true }
+        ? prepared.file
         : { audio: prepared.file };
 
     manualDialing++;
