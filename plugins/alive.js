@@ -10,7 +10,7 @@ export default {
 
     async run({ reply, config, prefix, state }) {
         const text =
-`📞 *${config.botName}* is alive! ✅
+`📞 *${config.botName}* online! ✅
 
 🟢 *Status:* Online
 📞 *Auto Call:* ${state.callOn ? '🟢 ON' : '🔴 OFF'}
@@ -18,7 +18,7 @@ export default {
 🏷️ *Version:* ${config.version}
 👤 *Owner:* ${config.ownerName}
 
-Type \`${prefix}menu\` to see all commands.
+සියලු commands බලන්න \`${prefix}menu\` type කරන්න.
 
 ${config.texts.footer}`;
         await reply(text);

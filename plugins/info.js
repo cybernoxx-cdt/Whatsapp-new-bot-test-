@@ -1,7 +1,6 @@
 // .info — detailed bot / server information
 
 import os from 'os';
-import mongoose from 'mongoose';
 import { formatUptime, formatBytes } from './_utils.js';
 
 export default {
@@ -13,7 +12,6 @@ export default {
     async run({ reply, config, prefix, state }) {
         const mem = process.memoryUsage();
         const cpu = os.cpus()?.[0]?.model?.trim() || 'unknown';
-        const dbOk = mongoose.connection.readyState === 1;
 
         const text =
 `ℹ️ *${config.botName} — Info*
