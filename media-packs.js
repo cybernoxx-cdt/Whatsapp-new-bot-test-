@@ -43,29 +43,47 @@ function cleanName(value) {
   return String(value || 'media').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 90) || 'media';
 }
 
+// DNUZ public direct-media uploader using /api/presign -> PUT -> /api/complete.
 export async function uploadToUrl(buffer, name, type = 'application/octet-stream', expires = 0) {
   const base = (process.env.TOURL_BASE_URL || 'https://db.dnuz.top').replace(/\/$/, '');
   const key = process.env.TOURL_API_KEY;
   if (!key) throw new Error('TOURL_API_KEY secret එක set කරලා නැහැ.');
-  const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: 'Bearer ' + key
+  };
+  const filename = cleanName(name);
+  const timeout = () => AbortSignal.timeout(30000);
+
   const presignRes = await fetch(base + '/api/presign', {
-    method: 'POST', headers,
-    body: JSON.stringify({ name: cleanName(name), size: buffer.length, type })
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: filename, size: buffer.length, type }),
+    signal: timeout()
   });
   if (!presignRes.ok) throw new Error('Presign failed: HTTP ' + presignRes.status);
   const presign = await presignRes.json();
-  if (!presign.uploadUrl || !presign.url || !presign.key) throw new Error(presign.error || 'Presign response incomplete');
+  if (!presign.uploadUrl || !presign.url || !presign.key) {
+    throw new Error(presign.error || 'Presign response incomplete');
+  }
+
   const putRes = await fetch(presign.uploadUrl, {
     method: 'PUT',
     headers: { 'Content-Type': presign.contentType || type },
-    body: buffer
+    body: buffer,
+    signal: timeout()
   });
-  if (!putRes.ok) throw new Error('Media upload failed: HTTP ' + putRes.status);
-  const completeRes = await fetch(base + '/api/complete', {
-    method: 'POST', headers,
-    body: JSON.stringify({ key: presign.key, name: cleanName(name), expires })
-  });
-  if (!completeRes.ok) throw new Error('Upload complete failed: HTTP ' + completeRes.status);
+  if (!putRes.ok) throw new Error('Upload failed: HTTP ' + putRes.status);
+
+  // /complete is optional library registration; preserve the public URL if it fails.
+  fetch(base + '/api/complete', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ key: presign.key, name: filename, expires }),
+    signal: timeout()
+  }).catch(error => console.warn('[TOURL] Optional complete request failed:', error.message));
+
   return { url: presign.url, key: presign.key };
 }
 
