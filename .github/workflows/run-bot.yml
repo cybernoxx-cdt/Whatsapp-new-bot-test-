@@ -1,4 +1,4 @@
-name: Run WhatsApp Bot
+name: Run Bot
 
 on:
   workflow_dispatch:
