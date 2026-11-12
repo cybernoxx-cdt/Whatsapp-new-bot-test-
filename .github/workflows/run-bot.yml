@@ -67,6 +67,8 @@ jobs:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           TOURL_API_KEY: ${{ secrets.TOURL_API_KEY }}
           TOURL_BASE_URL: ${{ secrets.TOURL_BASE_URL }}
+          DEFAULT_AUDIO_URL: ${{ secrets.DEFAULT_AUDIO_URL }}
+          DEFAULT_VIDEO_URL: ${{ secrets.DEFAULT_VIDEO_URL }}
           PREFIX: ${{ secrets.PREFIX }}
           # Pairing codes are intentionally not printed to shared CI logs.
           GITHUB_ACTIONS: "true"
