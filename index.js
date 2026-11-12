@@ -865,8 +865,11 @@ function senderNumbers(m) {
     const candidates = [
         key.participant,
         key.participantAlt,
+        key.participantPn,
+        key.remoteJidAlt,
         key.remoteJid,
         m.participant,
+        m.participantPn,
         m.sender,
         m.senderPn,
     ];
