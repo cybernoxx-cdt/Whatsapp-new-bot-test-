@@ -1,7 +1,7 @@
 // ============================================================
 //  GOD VOIP MD - session loader
 //  config.js / SESSION_ID එකෙන් WhatsApp session එක ./session folder එකට restore කරනවා.
-//  Supported: Base64 (creds JSON) | raw JSON | MEGA link (url හෝ ID#KEY) | කෙටි id + sessionApi
+//  Supported: Base64 (creds JSON) | raw creds.json content | MEGA link (url හෝ ID#KEY)
 // ============================================================
 
 import fs from 'fs';
@@ -41,6 +41,7 @@ function writeSessionFiles(obj) {
     fs.rmSync(SESSION_DIR, { recursive: true, force: true });
     fs.mkdirSync(SESSION_DIR, { recursive: true });
     if (obj && obj.noiseKey && obj.signedIdentityKey) {
+        if (obj.registered === false) throw new Error('මේ session එක WhatsApp එකට link වෙලා නෑ (registered=false).');
         // creds.json content එක විතරයි
         fs.writeFileSync(path.join(SESSION_DIR, 'creds.json'), JSON.stringify(obj));
         return 1;
@@ -60,22 +61,17 @@ async function fromMega(link) {
     let File;
     try { ({ File } = await import('megajs')); }
     catch { throw new Error('megajs package එක නෑ. `npm install` run කරන්න.'); }
-    const url = /^https?:/i.test(link) ? link : `https://mega.nz/file/${link}`;
+    let url = /^https?:/i.test(link) ? link : `https://mega.nz/file/${link}`;
+    const old = url.match(/mega\.nz\/#!([\w-]+)!([\w-]+)/);   // පරණ link format: #!ID!KEY
+    if (old) url = `https://mega.nz/file/${old[1]}#${old[2]}`;
     const file = File.fromURL(url);
     await file.loadAttributes();
     const buf = await file.downloadBuffer();
     return buf.toString('utf-8');
 }
 
-async function fromApi(id, template) {
-    const url = template.includes('{id}') ? template.replace('{id}', encodeURIComponent(id)) : template + encodeURIComponent(id);
-    const res = await fetch(url, { headers: { 'User-Agent': 'GOD-VOIP-MD' } });
-    if (!res.ok) throw new Error(`sessionApi HTTP ${res.status}`);
-    return (await res.text()).trim();
-}
-
 // දෙන ලද session string එකෙන් JSON object එකක් හදාගන්නවා
-async function resolve(raw, api) {
+async function resolve(raw) {
     const s = stripPrefix(raw);
 
     let obj = tryJson(s) || tryBase64Json(s);
@@ -85,31 +81,21 @@ async function resolve(raw, api) {
         const text = await fromMega(s);
         obj = tryJson(text) || tryBase64Json(text.trim());
         if (obj) return obj;
-        throw new Error('MEGA file එකේ session data හරි නෑ.');
-    }
-
-    if (api) {
-        const text = await fromApi(s, api);
-        obj = tryJson(text) || tryBase64Json(text);
-        if (obj) return obj;
-        if (/mega\.nz|^[A-Za-z0-9_-]{8}#/.test(text)) {
-            const t2 = await fromMega(text);
-            obj = tryJson(t2) || tryBase64Json(t2.trim());
-            if (obj) return obj;
-        }
-        throw new Error('sessionApi එකෙන් ආපු data එකෙන් session එකක් හදාගන්න බෑ.');
+        throw new Error('MEGA file එකේ session data (creds) හරි නෑ.');
     }
 
     throw new Error(
-        'Session ID එක කෙටි id එකක් (' + s.slice(0, 20) + '…). ඒක ගන්න server URL එක config.js එකේ ' +
-        '`sessionApi` එකට දාන්න, නැත්නම් Base64 / MEGA link session එකක් පාවිච්චි කරන්න.'
+        'Session ID එක හඳුනාගන්න බෑ (' + s.slice(0, 12) + '…). Base64 / creds.json content / MEGA link එකක් දාන්න. ' +
+        'කෙටි id (xxxx=abc123) support නෑ.'
     );
 }
 
-export async function loadSession(raw, api) {
+export const sessionHash = (raw) => raw ? crypto.createHash('sha1').update(normalize(raw)).digest('hex') : '';
+
+export async function loadSession(raw) {
     if (!raw) throw new Error('SESSION ID එක config.js එකේ (sessionId) දාලා නෑ.');
 
-    const hash = crypto.createHash('sha1').update(normalize(raw)).digest('hex');
+    const hash = sessionHash(raw);
     const same = fs.existsSync(SRC_FILE) && fs.readFileSync(SRC_FILE, 'utf-8') === hash;
 
     // කලින් restore කරපු session එකම නම් ./session folder එක (අලුත් keys එක්ක) ඒ විදිහටම පාවිච්චි කරනවා
@@ -118,7 +104,7 @@ export async function loadSession(raw, api) {
         return;
     }
 
-    const obj = await resolve(raw, api);
+    const obj = await resolve(raw);
     const n = writeSessionFiles(obj);
     if (!n || !fs.existsSync(path.join(SESSION_DIR, 'creds.json'))) {
         throw new Error('Session එකේ creds.json නෑ - session එක වැරදියි.');
