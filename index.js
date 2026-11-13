@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
 import { validateMediaFile } from './security.js';
+import { getLatestCallMedia } from './media-store.js';
 
 // ---- Safe, concise logging: never print Signal ratchet/session objects ----
 const _rawLog = console.log.bind(console);
@@ -73,7 +74,7 @@ const MONGODB_URI = config.mongodbUri;
 const SESSION_KEY = config.sessionKey;
 const AUDIO_URL = config.audioUrl;
 const VIDEO_URL = config.videoUrl;
-console.log('🧩 BUILD v4 | autoDowngrade:off | auto-hangup | answerIncoming | media-log');
+console.log('🧩 BUILD v5 | local-tourl-media | direct-call | video-validate | vv-reupload | self-public');
 
 // ================= BAILEYS EXPORTS =================
 const pick = (name) => B[name] ?? B.default?.[name] ?? B.default?.default?.[name];
@@ -161,15 +162,20 @@ const Setting = mongoose.models.Setting || mongoose.model('Setting', new mongoos
 const SETTINGS_FILE = './data/settings.json';
 const dbOn = () => mongoose.connection.readyState === 1;
 let CALL_ON = config.autoCallDefault;
+let BOT_MODE = 'self';
+let ACTIVE_SOCKET = null;
 
 async function loadSettings() {
     try {
         if (dbOn()) {
             const st = await Setting.findOne({ key: 'autoCall' });
             if (st) CALL_ON = !!st.value;
+            const mode = await Setting.findOne({ key: 'botMode' });
+            if (mode?.value === 'public' || mode?.value === 'self') BOT_MODE = mode.value;
         } else if (fs.existsSync(SETTINGS_FILE)) {
             const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
             if (typeof j.autoCall === 'boolean') CALL_ON = j.autoCall;
+            if (j.botMode === 'public' || j.botMode === 'self') BOT_MODE = j.botMode;
         }
     } catch {}
     console.log('📞 Auto call:', CALL_ON ? 'ON' : 'OFF');
@@ -182,9 +188,23 @@ async function setCallOn(v) {
             await Setting.findOneAndUpdate({ key: 'autoCall' }, { value: v }, { upsert: true });
         } else {
             fs.mkdirSync('./data', { recursive: true });
-            fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ autoCall: v }));
+            fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ autoCall: v, botMode: BOT_MODE }, null, 2));
         }
     } catch (e) { console.log('Settings save error:', e.message); }
+}
+
+async function setBotMode(mode) {
+    BOT_MODE = mode === 'public' ? 'public' : 'self';
+    try {
+        if (dbOn()) await Setting.findOneAndUpdate({ key: 'botMode' }, { value: BOT_MODE }, { upsert: true });
+        else {
+            fs.mkdirSync('./data', { recursive: true });
+            const current = fs.existsSync(SETTINGS_FILE) ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) : {};
+            fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...current, botMode: BOT_MODE }, null, 2));
+        }
+    } catch (e) { console.log('Bot mode save error:', e.message); }
+    if (ACTIVE_SOCKET) ACTIVE_SOCKET.public = BOT_MODE === 'public';
+    console.log('🔐 Bot mode:', BOT_MODE);
 }
 
 // ================= MEDIA =================
@@ -321,16 +341,10 @@ async function prepareMedia(url, wantVideo) {
         return { file: path.resolve(file), kind: 'audio' };
     }
 
-    if (!inspection.hasVideo) {
-        if (!inspection.hasAudio) throw new Error('Media file has neither a supported video nor audio stream.');
-        console.log('⚠️ No video stream found; using validated audio stream.');
-        return { file: path.resolve(file), kind: 'audio' };
-    }
-    try {
-        file = await makeCallVideo(file);
-    } catch (e) {
-        console.log('video convert error (using original):', e.message);
-    }
+    if (!inspection.hasVideo) throw new Error('මෙම media file එකේ video stream එකක් නැහැ. .vcall සඳහා video එකක් .tourl කරන්න.');
+    file = await makeCallVideo(file);
+    const converted = await validateMediaFile(file, { ffprobe: FFPROBE, maxBytes: 150 * 1024 * 1024, maxDurationSeconds: 900 });
+    if (!converted.hasVideo) throw new Error('FFmpeg conversion එකෙන් valid video stream එකක් ලැබුණේ නැහැ.');
     return { file: path.resolve(file), kind: 'video' };
 }
 
@@ -583,49 +597,29 @@ async function runPlayback(voip, sock, callId, isVideo, replyJid, mediaUrl) {
     }
 }
 
-// Answer an incoming call with the library's high-level accept() — same path as dialing out.
+// Answer incoming calls using the documented acceptCall() method and local media.
 async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
-    if (handled.has(callId)) return;
-    handled.add(callId);
+    if (handled.has(callId) || accepting.has(callId)) return;
+    accepting.add(callId);
     try {
-        let prepared = null;
-        const mediaSource = isVideo ? VIDEO_URL : AUDIO_URL;
-        if (isVideo) prepared = await prepareMedia(mediaSource, true).catch(e => { console.log('video prepare error:', e.message); return null; });
-        if (!prepared) {
-            prepared = await prepareMedia(AUDIO_URL, false);
+        const latest = getLatestCallMedia()?.file || '';
+        const candidates = isVideo ? [latest, VIDEO_URL] : [latest, AUDIO_URL, VIDEO_URL].filter(Boolean);
+        let prepared = null; const errors = [];
+        for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+            try { prepared = await prepareMedia(candidate, isVideo); break; }
+            catch (error) { errors.push(error.message); }
         }
-        const media = prepared.kind === 'video'
-            ? { video: prepared.file, autoAdvance: true }
-            : { audio: prepared.file };
-        console.log(`📦 answering ${isVideo ? 'video' : 'audio'} call with`, prepared.kind, prepared.file);
-
-        const call = await voip.accept(
-            callId, media,
-            prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
-            CALL_OPTS,
-        );
+        if (!prepared) throw new Error(`Incoming ${isVideo ? 'video' : 'audio'} call සඳහා සුදුසු media එකක් නැහැ. ${errors.join(' | ')}`);
+        console.log(`📦 incoming ${isVideo ? 'video' : 'audio'} media ready:`, prepared.kind, prepared.file);
+        await voip.acceptCall(callId);
         console.log('✅ Call accepted:', callId);
-        call.on('error', (e) => console.log('Incoming call error:', e?.message ?? e));
-        call.on('ended', (r) => { console.log('📴 Incoming call ended:', r ?? ''); setTimeout(() => handled.delete(callId), 60000); });
-        watchCall(call, 'incoming');
-        armAutoHangup(call, prepared.file, 'incoming', true).catch(() => {});
+        await runPlayback(voip, sock, callId, isVideo, replyJid, prepared.file);
     } catch (e) {
-        console.log('❌ Accept error:', e.message);
-        // if it was never accepted, fall back to the old method once
-        const info = voip.coordinator?.getCall?.(callId);
-        if (info?.canAccept) {
-            handled.delete(callId);
-            try {
-                await voip.acceptCall(callId);
-                console.log('✅ Call accepted (legacy):', callId);
-                await runPlayback(voip, sock, callId, isVideo, replyJid);
-                return;
-            } catch (e2) { console.log('❌ legacy accept error:', e2.message); }
-        }
+        console.log('❌ Incoming call error:', e.message);
         try { await voip.rejectCall(callId); } catch {}
-        try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n\n${texts.footer}` }); } catch {}
+        try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n${e.message}\n\n${texts.footer}` }); } catch {}
         setTimeout(() => handled.delete(callId), 60000);
-    }
+    } finally { accepting.delete(callId); }
 }
 
 const ANSWERED_RE = /connected|active|answered|in_call|incall|established|accepted/i;
@@ -699,74 +693,38 @@ async function setupVoip(sock) {
 const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(u || '');
 
 async function dialOut(kind, number, url) {
-    // GitHub Actions can receive a command just after WhatsApp connects but
-    // before Voip.listen() has finished. Wait for readiness instead of failing.
     const readyDeadline = Date.now() + 30000;
     while (!VOIP && Date.now() < readyDeadline) {
-        if (voipInitPromise) {
-            try { await Promise.race([voipInitPromise, sleep(1000)]); } catch {}
-        } else {
-            await sleep(500);
-        }
+        if (voipInitPromise) { try { await Promise.race([voipInitPromise, sleep(1000)]); } catch {} }
+        else await sleep(500);
     }
     if (!VOIP) throw new Error('Voip initialize වුණේ නැහැ. Logs වල "Voip setup error" හෝ "Voip listening" පරීක්ෂා කරන්න.');
-
-    // Manual calls must always receive the media URL explicitly.
-    // .tourl only converts replied media into a link; it never stores call media.
-    if (!url) throw new Error(`Paste a direct public media URL: .${kind === 'video' ? 'vcall' : 'acall'} NUMBER https://example.com/media.`);
-    const candidates = [{ url, source: 'command URL' }];
-
+    let source = url; let sourceLabel = 'command URL';
+    if (!source) {
+        const latest = getLatestCallMedia();
+        if (!latest?.file) throw new Error(`Latest .tourl media එකක් නැහැ. Media එකකට reply කරලා .tourl යවන්න. ඉන්පසු .${kind === 'video' ? 'vcall' : 'acall'} NUMBER භාවිතා කරන්න.`);
+        source = latest.file; sourceLabel = 'latest .tourl local media';
+    }
     let prepared;
-    let selectedSource = '';
-    const failures = [];
-    for (const candidate of candidates) {
-        if (!isHttpUrl(candidate.url)) {
-            failures.push(`${candidate.source}: invalid HTTP(S) URL`);
-            continue;
-        }
-        console.log('[MEDIA] Checking source:', candidate.source);
-        try {
-            prepared = await prepareMedia(candidate.url, kind === 'video');
-            selectedSource = candidate.source;
-            break;
-        } catch (error) {
-            failures.push(`${candidate.source}: ${error.message}`);
-            console.warn('[MEDIA] Explicit media URL rejected:', error.message);
-            // Explicit URLs are intentional; never silently substitute another file.
-            if (url) break;
-        }
-    }
-
-    if (!prepared) {
-        throw new Error('The supplied media URL cannot be downloaded by the bot: ' + failures.join(' | ') +
-            '. Generate a fresh URL with .tourl. If the same URL still returns 403, DNUZ must enable public/anonymous file downloads.');
-    }
-    console.log('[MEDIA] Source selected:', selectedSource);
-    console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file);
-
-    // Let @dnuzi/baileys own call signaling, media playback and auto-end.
-    // Its documented API accepts a local file path and a resolution for video.
-    // Manual coordinator playback raced the library's own call media pipeline
-    // and could leave the peer stuck at "Connecting".
+    if (isHttpUrl(source)) { console.log('[MEDIA] Checking source:', sourceLabel); prepared = await prepareMedia(source, kind === 'video'); }
+    else if (fs.existsSync(source)) { console.log('[MEDIA] Checking local source:', sourceLabel); prepared = await prepareMedia(source, kind === 'video'); }
+    else throw new Error('Media source එක හමු වුණේ නැහැ. නැවත .tourl යවන්න.');
+    console.log('[MEDIA] Source selected:', sourceLabel);
+    const size = fs.statSync(prepared.file).size;
+    const limit = (kind === 'video' ? 50 : 20) * 1024 * 1024;
+    if (size > limit) throw new Error(`${kind === 'video' ? 'Video' : 'Audio'} media එක ${kind === 'video' ? '50' : '20'} MB limit එක ඉක්මවා ඇත. .tourl කිරීමට පෙර file එක compress කරන්න.`);
+    console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file, `(${(size / 1024 / 1024).toFixed(2)} MB)`);
     const media = prepared.kind === 'video' ? prepared.file : { audio: prepared.file };
     console.log(`📞 Starting outgoing ${kind} call to ${number}`);
-
-    const call = await VOIP.call(
-        number,
-        media,
-        prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined,
-        { ...CALL_OPTS, autoEndCall: true, loop: false },
-    );
-
+    const call = await VOIP.call(number, media, prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined, { ...CALL_OPTS, autoEndCall: true, loop: false });
     const callId = call?.callId ?? call?.id;
     console.log('📡 VOIP.call returned:', callId || 'no callId', '| target:', call?.target || number);
     if (!callId) throw new Error('VOIP.call() did not return a callId; inspect VOIP call_error logs.');
-
     watchCall(call, `manual ${kind}`);
     call.on('ringing', () => console.log(`📳 ${kind} call is ringing:`, callId));
     call.on('connected', () => console.log(`✅ ${kind} call connected:`, callId));
-    call.on('ended', (reason) => console.log(`📴 ${kind} call ended:`, reason || ''));
-    call.on('error', (error) => console.error(`❌ ${kind} call error:`, error?.message || error));
+    call.on('ended', reason => console.log(`📴 ${kind} call ended:`, reason || ''));
+    call.on('error', error => console.error(`❌ ${kind} call error:`, error?.message || error));
     return call;
 }
 
@@ -891,15 +849,18 @@ async function handleCommand(sock, m) {
     const isPing = name === 'c-ping' && arg === undefined;
     const isVcall = name === 'vcall';
     const isAcall = name === 'acall';
+    const isSelf = name === 'self';
+    const isPublic = name === 'public';
     const plugin = PLUGIN_MAP.get(name);
-    if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall) return;
+    if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall && !isSelf && !isPublic) return;
 
     // Group messages identify the sender via participant; newer Baileys builds
     // may expose the phone-number JID as participantAlt when the primary is an LID.
     const senders = senderNumbers(m);
     const isOwner = !!m.key.fromMe || senders.some(number => OWNERS.includes(number));
 
-    const allowed = isOwner || (plugin && !plugin.ownerOnly && config.publicCommands);
+    const publicAllowed = BOT_MODE === 'public' && ((plugin && !plugin.ownerOnly) || isMenu || isPing || (isCall && arg !== 'on' && arg !== 'off'));
+    const allowed = isOwner || publicAllowed;
     if (!allowed) {
         await sock.sendMessage(jid, { text: `${texts.ownerOnly}\n\n${texts.footer}` }, { quoted: m });
         return;
@@ -907,7 +868,14 @@ async function handleCommand(sock, m) {
 
     const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
 
+    if (isSelf || isPublic) {
+        if (!isOwner) return reply(`${texts.ownerOnly}\n\n${texts.footer}`);
+        await setBotMode(isSelf ? 'self' : 'public');
+        return reply(`✅ Bot mode: *${BOT_MODE.toUpperCase()}*\n${BOT_MODE === 'self' ? 'Owner commands only.' : 'Public commands enabled (owner-only commands remain protected).'}\n\n${texts.footer}`);
+    }
+
     if (isVcall || isAcall) {
+        if (!isOwner) return reply(`${texts.ownerOnly}\n\n${texts.footer}`);
         await handleDial(sock, m, isVcall ? 'video' : 'audio', rawArgs, reply);
         return;
     }
@@ -988,6 +956,9 @@ async function start() {
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
     });
+
+    ACTIVE_SOCKET = sock;
+    sock.public = BOT_MODE === 'public';
 
     // Session නැත්නම් config.js එකේ number එකට pair code එක logs වල පෙන්වනවා
     if (!sock.authState.creds.registered && !pairRequested) {
