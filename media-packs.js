@@ -29,7 +29,8 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
   catch { throw new Error('DNUZ /api/presign returned invalid JSON.'); }
   if (!presignResponse.ok) throw new Error(p?.error || 'DNUZ presign failed: HTTP ' + presignResponse.status);
   if (!p?.uploadUrl || !p?.url) throw new Error(p?.error || 'DNUZ presign response must include uploadUrl and url.');
-  if (!/^https:\\/\\//i.test(p.uploadUrl) || !/^https:\\/\\//i.test(p.url)) {
+  const isHttpsUrl = (value) => { try { return new URL(value).protocol === 'https:'; } catch { return false; } };
+  if (!isHttpsUrl(p.uploadUrl) || !isHttpsUrl(p.url)) {
     throw new Error('DNUZ returned an invalid HTTPS upload or public URL.');
   }
 
