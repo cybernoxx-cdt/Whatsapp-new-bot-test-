@@ -164,6 +164,10 @@ const dbOn = () => mongoose.connection.readyState === 1;
 let CALL_ON = config.autoCallDefault;
 let BOT_MODE = 'self';
 let ACTIVE_SOCKET = null;
+const DEFAULT_CONNECT_IMAGE = 'https://file.dnuz.top/ulyg5b.png';
+const DEFAULT_MENU_IMAGE = 'https://file.dnuz.top/4bo96s.jpg';
+let CONNECT_IMAGE_URL = DEFAULT_CONNECT_IMAGE;
+let MENU_IMAGE_URL = DEFAULT_MENU_IMAGE;
 
 async function loadSettings() {
     try {
@@ -172,10 +176,16 @@ async function loadSettings() {
             if (st) CALL_ON = !!st.value;
             const mode = await Setting.findOne({ key: 'botMode' });
             if (mode?.value === 'public' || mode?.value === 'self') BOT_MODE = mode.value;
+            const connectImage = await Setting.findOne({ key: 'connectImageUrl' });
+            const menuImage = await Setting.findOne({ key: 'menuImageUrl' });
+            CONNECT_IMAGE_URL = connectImage?.value || DEFAULT_CONNECT_IMAGE;
+            MENU_IMAGE_URL = menuImage?.value || DEFAULT_MENU_IMAGE;
         } else if (fs.existsSync(SETTINGS_FILE)) {
             const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
             if (typeof j.autoCall === 'boolean') CALL_ON = j.autoCall;
             if (j.botMode === 'public' || j.botMode === 'self') BOT_MODE = j.botMode;
+            CONNECT_IMAGE_URL = j.connectImageUrl || DEFAULT_CONNECT_IMAGE;
+            MENU_IMAGE_URL = j.menuImageUrl || DEFAULT_MENU_IMAGE;
         }
     } catch {}
     console.log('📞 Auto call:', CALL_ON ? 'ON' : 'OFF');
@@ -191,6 +201,21 @@ async function setCallOn(v) {
             fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ autoCall: v, botMode: BOT_MODE }, null, 2));
         }
     } catch (e) { console.log('Settings save error:', e.message); }
+}
+
+async function saveImageSettings() {
+    try {
+        if (dbOn()) {
+            await Promise.all([
+                Setting.findOneAndUpdate({ key: 'connectImageUrl' }, { value: CONNECT_IMAGE_URL }, { upsert: true }),
+                Setting.findOneAndUpdate({ key: 'menuImageUrl' }, { value: MENU_IMAGE_URL }, { upsert: true }),
+            ]);
+        } else {
+            fs.mkdirSync('./data', { recursive: true });
+            const current = fs.existsSync(SETTINGS_FILE) ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) : {};
+            fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...current, connectImageUrl: CONNECT_IMAGE_URL, menuImageUrl: MENU_IMAGE_URL }, null, 2));
+        }
+    } catch (e) { console.log('Image settings save error:', e.message); }
 }
 
 async function setBotMode(mode) {
@@ -893,7 +918,7 @@ async function handleCommand(sock, m) {
             args: rawArgs,
             text: rawArgs.join(' '),
             reply,
-            state: { callOn: CALL_ON, pluginCount: PLUGIN_LIST.length, plugins: PLUGIN_LIST, dbConnected: dbOn() },
+            state: { callOn: CALL_ON, pluginCount: PLUGIN_LIST.length, plugins: PLUGIN_LIST, dbConnected: dbOn(), menuImageUrl: MENU_IMAGE_URL, connectImageUrl: CONNECT_IMAGE_URL },
         };
         try {
             await plugin.run(ctx);
@@ -1012,6 +1037,24 @@ async function start() {
             pairAttempts = 0;
             console.log('✅ Connected: ' + sock.user?.id);
             await saveSession();
+            // Send a branded connection card to the configured owner after each successful connection.
+            try {
+                const ownerNumber = String(config.owners?.[0] || config.number || '').replace(/[^0-9]/g, '');
+                if (ownerNumber) {
+                    await sock.sendMessage(ownerNumber + '@s.whatsapp.net', {
+                        image: { url: CONNECT_IMAGE_URL },
+                        caption: `✅ *${config.botName} Connected Successfully!*
+
+🤖 *Bot:* ${config.botName}
+📡 *Status:* Online
+🔐 *Mode:* ${BOT_MODE.toUpperCase()}
+📞 *Auto Call:* ${CALL_ON ? 'ON' : 'OFF'}
+💾 *Database:* ${dbOn() ? 'MongoDB Connected' : 'Local fallback'}
+
+> ✦ ${config.botName}`,
+                    });
+                }
+            } catch (e) { console.log('Connect image message failed:', e.message); }
             if (!voipReady) {
                 voipReady = true;
                 voipInitPromise = setupVoip(sock).catch((e) => {
