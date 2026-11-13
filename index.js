@@ -15,7 +15,6 @@ import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
-import { getPackMedia, getPackMediaCandidates } from './media-packs.js';
 import { validateMediaFile } from './security.js';
 
 // ---- Safe, concise logging: never print Signal ratchet/session objects ----
@@ -244,7 +243,7 @@ async function downloadFile(url, file) {
                 const permanent = e.permanent || /HTTP (401|403|404|410)/.test(e.message) || /HTML page instead of a media file/.test(e.message);
                 console.log(`⚠️ [MEDIA] Download ${permanent ? 'rejected' : 'failed'}: ${e.message}`);
                 if (permanent) {
-                    throw new Error(`Media URL is not publicly downloadable (${e.message}). Reply to the media and run .tourl (or .addpack packname), then run .vcall NUMBER without a URL.`);
+                    throw new Error(`Media URL is not publicly downloadable (${e.message}). Check that the pasted link is a direct, publicly downloadable media URL.`);
                 }
                 if (attempt < 3) await sleep(1200 * attempt);
             }
@@ -588,13 +587,10 @@ async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
     handled.add(callId);
     try {
         let prepared = null;
-        let savedMedia = null;
-        try { savedMedia = await getPackMedia('uploads', isVideo ? 'video' : 'audio'); } catch {}
-        const mediaSource = savedMedia?.url || (isVideo ? VIDEO_URL : AUDIO_URL);
+        const mediaSource = isVideo ? VIDEO_URL : AUDIO_URL;
         if (isVideo) prepared = await prepareMedia(mediaSource, true).catch(e => { console.log('video prepare error:', e.message); return null; });
         if (!prepared) {
-            const audioAsset = isVideo ? await getPackMedia('uploads', 'audio').catch(() => null) : savedMedia;
-            prepared = await prepareMedia(audioAsset?.url || AUDIO_URL, false);
+            prepared = await prepareMedia(AUDIO_URL, false);
         }
         const media = prepared.kind === 'video'
             ? { video: prepared.file, autoAdvance: true }
@@ -713,37 +709,10 @@ async function dialOut(kind, number, url) {
     }
     if (!VOIP) throw new Error('Voip initialize වුණේ නැහැ. Logs වල "Voip setup error" හෝ "Voip listening" පරීක්ෂා කරන්න.');
 
-    // Explicit URL wins. Without one, prefer the newest .tourl upload;
-    // use config only as a fallback. This avoids stale DEFAULT_AUDIO_URL values
-    // shadowing a freshly uploaded public media file.
-    const configuredUrl = kind === 'video' ? VIDEO_URL : AUDIO_URL;
-    const candidates = [];
-    if (url) {
-        candidates.push({ url, source: 'command URL' });
-    } else {
-        try {
-            const savedUploads = await getPackMediaCandidates('uploads', kind, 5);
-            for (let index = 0; index < savedUploads.length; index++) {
-                const asset = savedUploads[index];
-                if (asset?.url && !candidates.some(item => item.url === asset.url)) {
-                    candidates.push({
-                        url: asset.url,
-                        source: index === 0 ? 'latest .tourl upload' : 'older .tourl upload #' + (index + 1)
-                    });
-                }
-            }
-        } catch (e) {
-            console.warn('[MEDIA] Could not read saved uploads:', e.message);
-        }
-        if (configuredUrl && !candidates.some(item => item.url === configuredUrl)) {
-            candidates.push({ url: configuredUrl, source: 'config default' });
-        }
-    }
-
-    if (!candidates.length) {
-        const secretName = kind === 'audio' ? 'DEFAULT_AUDIO_URL' : 'DEFAULT_VIDEO_URL';
-        throw new Error(`No ${kind} media found. Reply to a file and run .tourl, or configure ${secretName}.`);
-    }
+    // Manual calls must always receive the media URL explicitly.
+    // .tourl only converts replied media into a link; it never stores call media.
+    if (!url) throw new Error(`Paste a direct public media URL: .${kind === 'video' ? 'vcall' : 'acall'} NUMBER https://example.com/media.`);
+    const candidates = [{ url, source: 'command URL' }];
 
     let prepared;
     let selectedSource = '';
@@ -768,7 +737,7 @@ async function dialOut(kind, number, url) {
 
     if (!prepared) {
         throw new Error('No publicly downloadable media source worked. ' + failures.join(' | ') +
-            '. Re-upload with .tourl; the upload is now checked for public access before it is saved.');
+            '. Use a direct public media link. If it still returns 403, the media host is denying downloads.');
     }
     console.log('[MEDIA] Source selected:', selectedSource);
     console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file);
@@ -804,17 +773,6 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
     const cmd = kind === 'video' ? 'vcall' : 'acall';
     let number = clean(rawArgs[0] || '');
     let url = rawArgs[1];
-    if (!number || number.length < 8 || number.length > 15) {
-        const candidateNumber = clean(rawArgs[rawArgs.length - 1] || '');
-        if (candidateNumber.length >= 8 && candidateNumber.length <= 15) {
-            const packName = rawArgs.slice(0, -1).join(' ').trim();
-            const asset = await getPackMedia(packName, kind);
-            if (!asset) throw new Error(`Pack "${packName}" තුළ ${kind} media එකක් හමු වුණේ නැහැ. .mypack බලන්න.`);
-            number = candidateNumber;
-            url = asset.url;
-        }
-    }
-
     if (number.length < 8 || number.length > 15) {
         await reply(`❌ Number එක වැරදියි.\n\n*Use:* \`${prefix}${cmd} 94771234567 ${kind === 'video' ? 'https://site.com/video.mp4' : 'https://site.com/audio.mp3'}\`\n(country code එක්ක, "+" නැතුව)\n\n${texts.footer}`);
         return;
@@ -824,7 +782,8 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
         return;
     }
 
-    await reply(`📞 ${label} call එකක් *${number}* ට යවනවා...\n🔗 ${url || '(default media)'}`);
+    if (!url) { await reply(`❌ Media URL එක අනිවාර්යයි. Use: .${cmd} ${number} https://direct-public-media-link\`); return; }
+    await reply(`📞 ${label} call එකක් *${number}* ට යවනවා...\n🔗 ${url}`);
     try {
         await dialOut(kind, number, url);
         await reply(`✅ ${label} call එක ring වෙනවා → *${number}*\nAnswer කළාම media එක play වෙලා call එක auto end වෙනවා.\n\n${texts.footer}`);
