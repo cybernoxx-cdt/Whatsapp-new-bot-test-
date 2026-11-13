@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "security-check": "node --check index.js && node --check media-store.js && node --check media-packs.js && node --check security.js && node --check session.js && node --check plugins/media-packs.js && node --check plugins/vv.js && node --check plugins/link.js && node --check plugins/menu.js"
+    "security-check": "node --check index.js && node --check media-store.js && node --check media-packs.js && node --check security.js && node --check session.js && node --check plugins/media-packs.js && node --check plugins/vv.js && node --check plugins/link.js && node --check plugins/menu.js && node --check plugins/jid.js && node --check plugins/gcall.js"
   },
   "keywords": [
     "whatsapp",
