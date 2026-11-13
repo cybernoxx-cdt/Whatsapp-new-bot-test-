@@ -6,7 +6,7 @@ export default {
     desc: 'Show all commands',
     ownerOnly: false,
 
-    async run({ reply, config, prefix, state }) {
+    async run({ reply, config, prefix, state, sock, jid, m }) {
         const lines = state.plugins
             .filter(p => !p.hidden)
             .sort((a, b) => a.name.localeCompare(b.name))
