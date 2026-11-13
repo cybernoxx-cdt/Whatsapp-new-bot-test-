@@ -5,7 +5,8 @@ function cleanName(value) {
 }
 
 export async function uploadToUrl(buffer, name, type = 'application/octet-stream', expires = 0) {
-  const base = (process.env.TOURL_BASE_URL || 'https://db.dnuz.top').replace(/\\/$/, '');
+  const configuredBase = process.env.TOURL_BASE_URL || 'https://db.dnuz.top';
+  const base = configuredBase.endsWith('/') ? configuredBase.slice(0, -1) : configuredBase;
   const apiKey = process.env.TOURL_API_KEY;
   if (!apiKey || apiKey === 'YOUR_API_KEY') throw new Error('TOURL_API_KEY GitHub Secret එක set කරලා නැහැ.');
   if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('Upload buffer is empty.');
