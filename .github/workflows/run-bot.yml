@@ -56,6 +56,11 @@ jobs:
           if [ -z "$SESSION_ID" ]; then
             echo "::warning::SESSION_ID is empty. A valid existing local session is required for headless GitHub Actions."
           fi
+          if [ -z "${{ secrets.DNUZ_API_KEY }}" ]; then
+            echo "::warning::DNUZ_API_KEY is not available to this workflow. Add it under Settings > Secrets and variables > Actions, then rerun."
+          else
+            echo "✅ DNUZ_API_KEY secret is available to the workflow"
+          fi
           echo "✅ Required configuration validated"
 
       - name: Start bot
@@ -65,6 +70,8 @@ jobs:
           SESSION_ID: ${{ secrets.SESSION_ID }}
           SESSION_KEY: ${{ secrets.SESSION_KEY }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          DNUZ_API_KEY: ${{ secrets.DNUZ_API_KEY }}
+          DNUZ_API_BASE: ${{ secrets.DNUZ_API_BASE }}
           DEFAULT_AUDIO_URL: ${{ secrets.DEFAULT_AUDIO_URL }}
           DEFAULT_VIDEO_URL: ${{ secrets.DEFAULT_VIDEO_URL }}
           PREFIX: ${{ secrets.PREFIX }}
