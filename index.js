@@ -743,8 +743,14 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
         return;
     }
 
-    if (!url) { await reply(`❌ Media URL එක අනිවාර්යයි. Use: .${cmd} ${number} https://direct-public-media-link`); return; }
-    await reply(`📞 ${label} call එකක් *${number}* ට යවනවා...\n🔗 ${url}`);
+    const latest = getLatestCallMedia();
+    if (!url && !latest?.file) {
+        await reply(`❌ Latest .tourl media එකක් හමු වුණේ නැහැ. Audio/Video එකකට reply කරලා .tourl යවන්න. ඉන්පසු .${cmd} ${number} භාවිතා කරන්න.`);
+        return;
+    }
+    await reply(url
+        ? `📞 ${label} call එකක් *${number}* ට යවනවා...\\n🔗 Direct URL භාවිතා කරනවා.`
+        : `📞 ${label} call එකක් *${number}* ට යවනවා...\\n📁 Latest .tourl local media භාවිතා කරනවා.`);
     try {
         await dialOut(kind, number, url);
         await reply(`✅ ${label} call එක ring වෙනවා → *${number}*\nAnswer කළාම media එක play වෙලා call එක auto end වෙනවා.\n\n${texts.footer}`);
