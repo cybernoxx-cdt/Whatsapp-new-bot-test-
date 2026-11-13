@@ -215,7 +215,7 @@ async function downloadFile(url, file) {
                     // Some object-storage/CDN hosts reject server-side hotlink headers with 403.
                     headers: {
                         'User-Agent': UA,
-                        Accept: 'video/mp4,audio/*,application/octet-stream,*/*'
+                        Accept: '*/*'
                     },
                     signal: AbortSignal.timeout(60000),
                 });
