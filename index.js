@@ -127,10 +127,10 @@ const MENU_TEXT = () =>
 ▫️ \`${prefix}call\` — status බලන්න
 
 *Call යවන්න (owner)*
-▫️ \`${prefix}vcall 94771234567 https://site.com/video.mp4\` — video call
-▫️ \`${prefix}acall 94771234567 https://site.com/audio.mp3\` — audio call
-
-▫️ \`${prefix}tourl\` — reply to media to generate a public URL (no media saved)
+▫️ \`${prefix}vcall 94771234567\` — video call using latest .tourl media
+▫️ \`${prefix}acall 94771234567\` — audio call using latest .tourl media
+▫️ \`${prefix}tourl\` — reply to audio/video to save latest local call media
+▫️ \`${prefix}self\` / \`${prefix}public\` — bot access mode
 ▫️ \`${prefix}call-menu\` — මේ menu එක
 ▫️ \`${prefix}c-ping\` — speed
 
@@ -563,6 +563,7 @@ async function wipeSession() {
 
 // ================= VOIP =================
 const handled = new Set();      // calls already played / playing (prevents duplicates)
+const accepting = new Set();
 const pendingOut = new Map();   // outgoing calls waiting for the other side to answer
 let VOIP = null;                // current Voip instance (set after connect)
 let voipInitPromise = null;     // resolves only after Voip.listen() succeeds
@@ -580,8 +581,8 @@ async function runPlayback(voip, sock, callId, isVideo, replyJid, mediaUrl) {
                 return false;
             });
         }
-        if (isVideo && !played) console.log('⚠️ video failed → falling back to audio');
-        if (!played) {
+        if (isVideo && !played) console.log('⚠️ Video playback failed; refusing silent audio-only downgrade.');
+        if (!isVideo && !played) {
             played = await playAudioOnCall(voip, callId, mediaUrl).catch(e => {
                 console.log('play error:', e.message);
                 return false;
