@@ -782,7 +782,7 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
         return;
     }
 
-    if (!url) { await reply(`❌ Media URL එක අනිවාර්යයි. Use: .${cmd} ${number} https://direct-public-media-link\`); return; }
+    if (!url) { await reply(`❌ Media URL එක අනිවාර්යයි. Use: .${cmd} ${number} https://direct-public-media-link`); return; }
     await reply(`📞 ${label} call එකක් *${number}* ට යවනවා...\n🔗 ${url}`);
     try {
         await dialOut(kind, number, url);
