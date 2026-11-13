@@ -13,7 +13,7 @@ export default {
             .map(p => `▫️ \`${prefix}${p.name}\` — ${p.desc || 'no description'}`)
             .join('\n');
 
-        await reply(
+        const caption =
 `📋 *${config.botName} — Menu*
 
 *📞 Auto call*
@@ -25,6 +25,11 @@ export default {
 *🔌 Plugins*
 ${lines}
 
-${config.texts.footer}`);
+${config.texts.footer}`;
+        if (state.menuImageUrl) {
+            await sock.sendMessage(jid, { image: { url: state.menuImageUrl }, caption }, { quoted: m });
+        } else {
+            await reply(caption);
+        }
     },
 };
