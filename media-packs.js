@@ -1,6 +1,11 @@
-// Direct DNUZ upload only. No media bytes are written to MongoDB or GridFS.
+// Direct DNUZ upload only. No media bytes or URL records are stored by this bot.
+function cleanName(value) {
+  const base = String(value || 'media.bin').split(/[\\/]/).pop();
+  return base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'media.bin';
+}
+
 export async function uploadToUrl(buffer, name, type = 'application/octet-stream', expires = 0) {
-  const base = (process.env.TOURL_BASE_URL || 'https://db.dnuz.top').replace(/\/$/, '');
+  const base = (process.env.TOURL_BASE_URL || 'https://db.dnuz.top').replace(/\\/$/, '');
   const apiKey = process.env.TOURL_API_KEY;
   if (!apiKey || apiKey === 'YOUR_API_KEY') throw new Error('TOURL_API_KEY GitHub Secret එක set කරලා නැහැ.');
   if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('Upload buffer is empty.');
@@ -8,101 +13,79 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
 
   const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey };
   const filename = cleanName(name);
-  const timeout = () => AbortSignal.timeout(30000);
+  const timeout = () => AbortSignal.timeout(60000);
+
+  // Follow the DNUZ API contract exactly: presign -> signed PUT -> complete -> p.url.
   const presignResponse = await fetch(base + '/api/presign', {
-    method: 'POST', headers,
+    method: 'POST',
+    headers,
     body: JSON.stringify({ name: filename, size: buffer.length, type }),
     signal: timeout()
   });
   const presignText = await presignResponse.text();
-  let presignBody;
-  try { presignBody = JSON.parse(presignText); } catch { throw new Error('Upload host returned invalid presign JSON.'); }
-  const unwrap = (value) => {
-    let current = value;
-    for (let i = 0; i < 4 && current && typeof current === 'object'; i++) {
-      const nested = current.data || current.result || current.file;
-      if (!nested || typeof nested !== 'object') break;
-      current = nested;
-    }
-    return current || {};
-  };
-  const presign = unwrap(presignBody);
-  if (!presignResponse.ok) throw new Error(presignBody.error || presign.error || 'Presign failed: HTTP ' + presignResponse.status);
-
-  // Accept documented camelCase and common snake_case response fields.
-  const uploadUrl = presign.uploadUrl || presign.upload_url || presign.signedUrl || presign.signed_url;
-  const presignUrl = presign.url || presign.publicUrl || presign.public_url || presign.downloadUrl || presign.download_url;
-  const objectKey = presign.key || presign.storageKey || presign.storage_key;
-  const uploadContentType = presign.contentType || presign.content_type || type;
-  if (!uploadUrl || !objectKey || !/^https:\/\//i.test(uploadUrl)) {
-    throw new Error(presignBody.error || 'Upload host did not return a valid HTTPS upload URL and object key.');
+  let p;
+  try { p = JSON.parse(presignText); }
+  catch { throw new Error('DNUZ /api/presign returned invalid JSON.'); }
+  if (!presignResponse.ok) throw new Error(p?.error || 'DNUZ presign failed: HTTP ' + presignResponse.status);
+  if (!p?.uploadUrl || !p?.url) throw new Error(p?.error || 'DNUZ presign response must include uploadUrl and url.');
+  if (!/^https:\\/\\//i.test(p.uploadUrl) || !/^https:\\/\\//i.test(p.url)) {
+    throw new Error('DNUZ returned an invalid HTTPS upload or public URL.');
   }
 
-  const putResponse = await fetch(uploadUrl, {
+  const putResponse = await fetch(p.uploadUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': uploadContentType },
+    headers: { 'Content-Type': p.contentType || type },
     body: buffer,
     signal: timeout()
   });
-  if (!putResponse.ok) throw new Error('Media upload failed: HTTP ' + putResponse.status);
+  if (!putResponse.ok) throw new Error('DNUZ media PUT failed: HTTP ' + putResponse.status);
 
-  // Finalize the object before publishing its URL. Some hosts return a URL
-  // at presign time, but keep it private/unavailable until /complete succeeds.
-  const completeResponse = await fetch(base + '/api/complete', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ key: objectKey, name: filename, expires }),
-    signal: timeout()
-  });
-  const completeText = await completeResponse.text();
-  let completedBody = {};
-  try { completedBody = completeText ? JSON.parse(completeText) : {}; } catch {
-    if (completeResponse.ok) throw new Error('Upload host returned invalid completion JSON.');
-  }
-  if (!completeResponse.ok) {
-    throw new Error(completedBody.error || `Upload completion failed: HTTP ${completeResponse.status}`);
-  }
-
-  // Prefer a canonical public URL returned by completion; otherwise use the
-  // exact public URL from presign. Never rewrite or reconstruct host-issued URLs.
-  const completeData = unwrap(completedBody);
-  const publicUrl = completeData.url || completeData.publicUrl || completeData.public_url ||
-    completeData.downloadUrl || completeData.download_url || completeData.fileUrl ||
-    completeData.file_url || completeData.directUrl || completeData.direct_url ||
-    presignUrl;
-  if (!/^https:\/\//i.test(String(publicUrl || ''))) {
-    throw new Error('Upload host did not return a valid public HTTPS media URL.');
+  // /api/complete is an optional library/lifetime operation in the supplied
+  // DNUZ example. Await it so the link is not handed out before it finishes,
+  // but do not discard p.url if this optional operation is unavailable.
+  try {
+    const completeResponse = await fetch(base + '/api/complete', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ key: p.key, name: filename, expires }),
+      signal: timeout()
+    });
+    if (!completeResponse.ok) {
+      const detail = (await completeResponse.text()).slice(0, 300);
+      console.warn('[TOURL] Optional /api/complete returned HTTP', completeResponse.status, detail);
+    }
+  } catch (error) {
+    console.warn('[TOURL] Optional /api/complete unavailable:', error.message);
   }
 
-  // Verify anonymous GET access before saving the URL in MongoDB. A successful
-  // PUT only proves storage upload; it does not prove the object is publicly
-  // readable by the call runner.
+  // Check the exact p.url that the documented DNUZ helper returns, using
+  // the same public-download headers as the call downloader.
   let lastStatus = 'no response';
-  let isPublic = false;
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const check = await fetch(publicUrl, {
+      const check = await fetch(p.url, {
         method: 'GET',
         redirect: 'follow',
-        headers: { Accept: '*/*' },
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
+          'Accept': '*/*',
+          'Range': 'bytes=0-1023',
+          'Referer': base + '/',
+          'Origin': base
+        },
         signal: timeout()
       });
-      lastStatus = `HTTP ${check.status}`;
+      lastStatus = 'HTTP ' + check.status;
       const contentType = (check.headers.get('content-type') || '').toLowerCase();
-      isPublic = check.ok && !contentType.includes('text/html') &&
+      const valid = check.ok && !contentType.includes('text/html') &&
         !contentType.includes('application/json');
       try { await check.body?.cancel(); } catch {}
-      if (isPublic) break;
+      if (valid) return { url: p.url, key: p.key || null };
     } catch (error) {
       lastStatus = error.message;
     }
-    if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 1200 * attempt));
   }
 
-  if (!isPublic) {
-    throw new Error(`DNUZ upload finished but its URL is not publicly readable (${lastStatus}). The host may still be denying anonymous downloads; check the DNUZ public-file permission and host settings. No broken URL was saved.`);
-  }
-
-  return { url: publicUrl, key: objectKey };
+  throw new Error('DNUZ upload completed, but the exact p.url is not publicly downloadable (' + lastStatus + '). The DNUZ host must allow anonymous GET access to this file; .tourl will not return a broken link.');
 }
-
