@@ -729,15 +729,15 @@ async function dialOut(kind, number, url) {
             break;
         } catch (error) {
             failures.push(`${candidate.source}: ${error.message}`);
-            console.warn('[MEDIA] Source unavailable; trying next configured source:', error.message);
+            console.warn('[MEDIA] Explicit media URL rejected:', error.message);
             // Explicit URLs are intentional; never silently substitute another file.
             if (url) break;
         }
     }
 
     if (!prepared) {
-        throw new Error('No publicly downloadable media source worked. ' + failures.join(' | ') +
-            '. Use a direct public media link. If it still returns 403, the media host is denying downloads.');
+        throw new Error('The supplied media URL cannot be downloaded by the bot: ' + failures.join(' | ') +
+            '. Generate a fresh URL with .tourl. If the same URL still returns 403, DNUZ must enable public/anonymous file downloads.');
     }
     console.log('[MEDIA] Source selected:', selectedSource);
     console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file);
