@@ -46,7 +46,7 @@ async function downloadQuoted(ctx) {
 }
 
 async function uploadAndLink(ctx) {
-  const { buffer, mime, name, kind } = await downloadQuoted(ctx);
+  const { buffer, mime, name } = await downloadQuoted(ctx);
   await ctx.reply('⏳ DNUZ upload host එකට media upload කරනවා...');
   const uploaded = await uploadToUrl(buffer, name, mime, 0);
   await ctx.reply('✅ *URL ready*\n\n🔗 ' + uploaded.url + '\n\nNo media was saved by the bot. Paste this link into .vcall or .acall with the recipient number.');
