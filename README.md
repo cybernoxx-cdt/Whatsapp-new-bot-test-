@@ -27,7 +27,7 @@ Existing direct URL forms remain supported:
 - `.vcall 947XXXXXXXX https://example.com/video.mp4`
 - `.acall 947XXXXXXXX https://example.com/audio.mp3`
 
-Uploads use `expires: 0`; permanent availability still depends on the upload provider's retention policy. Set `TOURL_API_KEY` in GitHub Actions Secrets (never paste it into source code). The bot verifies that the returned URL is anonymously downloadable before saving it. The media metadata is stored in the existing MongoDB database's `media_assets` collection. This code does not create a new database per media pack.
+Uploads use `expires: 0`; permanent availability still depends on the upload provider's retention policy. Set `TOURL_API_KEY` in GitHub Actions Secrets (never paste it into source code). The bot requires the `/api/complete` step to succeed, accepts nested/canonical URL fields from the upload API, and verifies anonymous GET access before saving. Media URLs saved by older builds may already be private or stale; after deploying this fix, reply to the media again and run `.tourl` to create a newly verified record. If a fresh upload still returns HTTP 403 during verification or download, the DNUZ host's public-file permission/serving policy must be corrected by its provider; the bot cannot bypass a server-side 403. The media metadata is stored in the existing MongoDB database's `media_assets` collection. This code does not create a new database per media pack.
 
 ## MongoDB quota note
 The app uses one database named in `MONGODB_URI` and named collections (`sessions`, `settings`, `media_assets`). If the MongoDB host account itself has reached its database quota, an administrator must free capacity or raise that provider limit; application code cannot override a server-side quota.
