@@ -29,7 +29,7 @@ function quotedMedia(ctx) {
 
 async function downloadQuoted(ctx) {
   const found = quotedMedia(ctx);
-  if (!found) throw new Error('Media file එකකට reply කරලා .tourl හෝ .addpack යවන්න.');
+  if (!found) throw new Error('Media file එකකට reply කරලා .tourl යවන්න.');
   const stream = await downloadContentFromMessage(found.node, found.type);
   const chunks = [];
   let size = 0;
@@ -42,7 +42,7 @@ async function downloadQuoted(ctx) {
   if (!buffer.length) throw new Error('WhatsApp media download එක හිස්.');
   const mime = found.node.mimetype || 'application/octet-stream';
   const name = found.node.fileName || ('whatsapp-' + Date.now());
-  return { buffer, mime, name, kind: mediaKindFromMime(mime) };
+  return { buffer, mime, name };
 }
 
 async function uploadAndLink(ctx) {
