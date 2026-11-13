@@ -4,7 +4,7 @@
 // ============================================================
 
 export default {
-    botName: 'GOD VOIP MD',
+    botName: '🥵 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 💋',
     version: '1.0.1',
     ownerName: 'Savendra',
     ownerUrl: '',
@@ -33,7 +33,7 @@ export default {
     texts: {
         fail: '⚠️ Call system එක busy. නැවත උත්සාහ කරන්න.',
         ownerOnly: '🔒 මේ command එක owner ට විතරයි.',
-        footer: '> ✦ GOD VOIP MD',
+        footer: '> ✦ 🥵 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 💋',
     },
 
     voip: {
