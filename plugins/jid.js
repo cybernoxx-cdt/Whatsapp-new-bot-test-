@@ -8,6 +8,7 @@ export default {
         const key = m?.key || {};
         const sender = key.participant || key.participantAlt ||
             key.participantPn || key.remoteJidAlt ||
+            (key.remoteJid && !key.remoteJid.endsWith('@g.us') ? key.remoteJid : '') ||
             (key.fromMe ? key.remoteJid : '');
         const chatType = jid?.endsWith('@g.us') ? 'GROUP' :
             jid?.endsWith('@s.whatsapp.net') ? 'PRIVATE CHAT' : 'CHAT';
