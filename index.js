@@ -188,6 +188,7 @@ async function loadSettings() {
             MENU_IMAGE_URL = j.menuImageUrl || DEFAULT_MENU_IMAGE;
         }
     } catch {}
+    await saveImageSettings();
     console.log('📞 Auto call:', CALL_ON ? 'ON' : 'OFF');
 }
 
