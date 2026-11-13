@@ -70,10 +70,7 @@ export async function uploadToUrl(buffer, name, type = 'application/octet-stream
         redirect: 'follow',
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
-          'Accept': '*/*',
-          'Range': 'bytes=0-1023',
-          'Referer': base + '/',
-          'Origin': base
+          'Accept': '*/*'
         },
         signal: timeout()
       });
