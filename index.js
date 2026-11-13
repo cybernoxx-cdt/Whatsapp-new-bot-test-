@@ -15,7 +15,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
-import { getPackMedia } from './media-packs.js';
+import { getPackMedia, getPackMediaCandidates } from './media-packs.js';
 import { validateMediaFile } from './security.js';
 
 // ---- Safe, concise logging: never print Signal ratchet/session objects ----
@@ -722,10 +722,18 @@ async function dialOut(kind, number, url) {
         candidates.push({ url, source: 'command URL' });
     } else {
         try {
-            const latestUpload = await getPackMedia('uploads', kind);
-            if (latestUpload?.url) candidates.push({ url: latestUpload.url, source: 'latest .tourl upload' });
+            const savedUploads = await getPackMediaCandidates('uploads', kind, 5);
+            for (let index = 0; index < savedUploads.length; index++) {
+                const asset = savedUploads[index];
+                if (asset?.url && !candidates.some(item => item.url === asset.url)) {
+                    candidates.push({
+                        url: asset.url,
+                        source: index === 0 ? 'latest .tourl upload' : 'older .tourl upload #' + (index + 1)
+                    });
+                }
+            }
         } catch (e) {
-            console.warn('[MEDIA] Could not read public uploads:', e.message);
+            console.warn('[MEDIA] Could not read saved uploads:', e.message);
         }
         if (configuredUrl && !candidates.some(item => item.url === configuredUrl)) {
             candidates.push({ url: configuredUrl, source: 'config default' });
