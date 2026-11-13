@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "security-check": "node --check index.js && node --check media-packs.js && node --check security.js"
+    "security-check": "node --check index.js && node --check media-packs.js && node --check security.js && node --check session.js && node --check plugins/media-packs.js"
   },
   "keywords": [
     "whatsapp",
