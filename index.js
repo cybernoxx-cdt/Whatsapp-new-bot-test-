@@ -1044,15 +1044,19 @@ async function start() {
                 if (ownerNumber) {
                     await sock.sendMessage(ownerNumber + '@s.whatsapp.net', {
                         image: { url: CONNECT_IMAGE_URL },
-                        caption: `✅ *${config.botName} Connected Successfully!*
+                        caption: `╭━━━〔 🥵 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 💋 〕━━━╮
+┃
+┃  ✅ *BOT CONNECTED SUCCESSFULLY*
+┃
+┃  🤖 *Name:* ${config.botName}
+┃  📡 *Status:* ONLINE
+┃  🔐 *Mode:* ${BOT_MODE.toUpperCase()}
+┃  📞 *Auto Call:* ${CALL_ON ? 'ON' : 'OFF'}
+┃  💾 *Database:* ${dbOn() ? 'MONGODB CONNECTED' : 'LOCAL FALLBACK'}
+┃
+╰━━━━━━━━━━━━━━━━━━━━━━╯
 
-🤖 *Bot:* ${config.botName}
-📡 *Status:* Online
-🔐 *Mode:* ${BOT_MODE.toUpperCase()}
-📞 *Auto Call:* ${CALL_ON ? 'ON' : 'OFF'}
-💾 *Database:* ${dbOn() ? 'MongoDB Connected' : 'Local fallback'}
-
-> ✦ ${config.botName}`,
+> ✦ Powered by ${config.botName}`,
                     });
                 }
             } catch (e) { console.log('Connect image message failed:', e.message); }
