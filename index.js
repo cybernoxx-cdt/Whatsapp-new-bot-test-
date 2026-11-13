@@ -128,13 +128,10 @@ const MENU_TEXT = () =>
 *Call යවන්න (owner)*
 ▫️ \`${prefix}vcall 94771234567 https://site.com/video.mp4\` — video call
 ▫️ \`${prefix}acall 94771234567 https://site.com/audio.mp3\` — audio call
-▫️ URL එක දාන්නේ නැත්නම් config.js එකේ default media එක යනවා
 
+▫️ \`${prefix}tourl\` — reply to media to generate a public URL (no media saved)
 ▫️ \`${prefix}call-menu\` — මේ menu එක
 ▫️ \`${prefix}c-ping\` — speed
-▫️ \`${prefix}addpack packname\` — reply to video/audio to save it
-▫️ \`${prefix}mypack\` — list saved media packs
-▫️ \`${prefix}tourl\` — upload replied media and save URL
 
 *Auto answer වැඩ කරන විදිහ*
 Audio call → voice file
@@ -214,7 +211,13 @@ async function downloadFile(url, file) {
             try {
                 response = await fetch(candidate, {
                     redirect: 'follow',
-                    headers: { 'User-Agent': UA, Accept: 'video/mp4,audio/*,application/octet-stream,*/*' },
+                    headers: {
+                        'User-Agent': UA,
+                        Accept: 'video/mp4,audio/*,application/octet-stream,*/*',
+                        ...(new URL(candidate).hostname.endsWith('dnuz.top')
+                            ? { Referer: new URL(candidate).origin + '/', Origin: new URL(candidate).origin }
+                            : {})
+                    },
                     signal: AbortSignal.timeout(60000),
                 });
 
