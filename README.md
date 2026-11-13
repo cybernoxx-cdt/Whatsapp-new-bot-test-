@@ -1,38 +1,27 @@
 # GOD VOIP MD
 
-WhatsApp media/call bot. Never commit session credentials, API keys, or database connection strings.
+WhatsApp VoIP bot. Media conversion and calls are separate operations.
 
-## GitHub Actions secrets
-- `BOT_NUMBER`: WhatsApp account number in international format, digits only.
-- `OWNER_NUMBER`: owner phone number, digits only.
-- `SESSION_ID`: optional supported session string. In GitHub Actions pairing-code output is intentionally disabled.
-- `MONGODB_URI`: connection string pointing to the existing database you intend to use.
-- `SESSION_KEY`: optional session record key.
-- `TOURL_API_KEY`: API bearer key for the upload service.
-- `TOURL_BASE_URL`: optional; defaults to `https://db.dnuz.top`.
-- `PREFIX`: optional command prefix.
+## Commands
+- `.tourl` — reply to a WhatsApp image, video, audio, or document to upload it to DNUZ and return a public URL. The bot does not save media files or media URL records in MongoDB.
+- `.vcall 947XXXXXXXX https://direct-public-media-url` — place a video call using the explicitly supplied URL.
+- `.acall 947XXXXXXXX https://direct-public-media-url` — place an audio call using the explicitly supplied URL.
+- `.call on|off`, `.call-menu`, `.c-ping` — existing call controls.
 
-For local use, place the complete Baileys multi-file auth state (creds.json and key files) in `auth_baileys/`. That folder is gitignored. The bot uses that folder when creds.json exists; otherwise it uses `session/`.
+The call commands require both a recipient number and a direct HTTP(S) media URL. They never read media from `.tourl` history, MongoDB, packs, or default media settings. `.tourl` only creates a link; copy that link and paste it as the second argument to `.vcall` or `.acall`.
 
-## Media packs
-Reply to a WhatsApp video/audio with:
-- `.addpack vibe` — upload to the media URL service and save the returned URL and metadata in the existing MongoDB database.
-- `.mypack` — list packs.
-- `.mypack vibe` — list assets in a pack.
-- `.tourl` — upload replied image/video/audio/document through the DNUZ `/api/presign` → signed `PUT` → `/api/complete` flow and return the public URL only. It will not fall back to a private `gridfs://` link.
-- `.vcall vibe 947XXXXXXXX` — call using the latest video in the pack.
-- `.acall vibe 947XXXXXXXX` — call using the latest audio in the pack.
+## DNUZ upload
+Set `TOURL_API_KEY` in GitHub Actions Secrets. Optional `TOURL_BASE_URL` defaults to `https://db.dnuz.top`.
 
-Existing direct URL forms remain supported:
-- `.vcall 947XXXXXXXX https://example.com/video.mp4`
-- `.acall 947XXXXXXXX https://example.com/audio.mp3`
+The uploader follows the supplied DNUZ API contract: `POST /api/presign`, signed `PUT` to `uploadUrl`, optional `POST /api/complete`, and returns the exact `p.url` supplied by presign. It checks that this exact URL is publicly downloadable before showing it. If DNUZ returns HTTP 401/403, the provider must fix the file's public-read permissions; the bot cannot override a server-side denial.
 
-Uploads use `expires: 0`; permanent availability still depends on the upload provider's retention policy. Set `TOURL_API_KEY` in GitHub Actions Secrets (never paste it into source code). The bot requires the `/api/complete` step to succeed, accepts nested/canonical URL fields from the upload API, and verifies anonymous GET access before saving. Media URLs saved by older builds may already be private or stale; after deploying this fix, reply to the media again and run `.tourl` to create a newly verified record. If a fresh upload still returns HTTP 403 during verification or download, the DNUZ host's public-file permission/serving policy must be corrected by its provider; the bot cannot bypass a server-side 403. The media metadata is stored in the existing MongoDB database's `media_assets` collection. This code does not create a new database per media pack.
-
-## MongoDB quota note
-The app uses one database named in `MONGODB_URI` and named collections (`sessions`, `settings`, `media_assets`). If the MongoDB host account itself has reached its database quota, an administrator must free capacity or raise that provider limit; application code cannot override a server-side quota.
+## Runtime secrets
+- `BOT_NUMBER`, `OWNER_NUMBER`
+- `SESSION_ID` (optional supported session string)
+- `MONGODB_URI` (used for WhatsApp session/settings only; no media asset collection)
+- `SESSION_KEY` (optional)
+- `TOURL_API_KEY`, `TOURL_BASE_URL` (optional)
+- `PREFIX` (optional)
 
 ## Security
-- Never commit `auth_baileys/`, `session/`, `.env`, credentials, or pairing codes.
-- Rotate any MongoDB password/session/API key that was previously pasted into a public repository or chat.
-- Pairing codes are not printed in GitHub Actions logs. Configure a session secret for CI instead.
+Never commit WhatsApp session credentials, API keys, database connection strings, or pairing codes. Rotate any credential that was exposed publicly.
