@@ -1,62 +1,87 @@
 import { downloadContentFromMessage } from '@dnuzi/baileys';
-import { uploadToUrl } from '../media-packs.js';
+import { saveLatestCallMedia } from '../media-store.js';
 
 function unwrap(message) {
-  let current = message;
-  while (current?.ephemeralMessage?.message || current?.documentWithCaptionMessage?.message) {
-    current = current.ephemeralMessage?.message || current.documentWithCaptionMessage?.message;
+  let current = message || {};
+  for (let i = 0; i < 8; i++) {
+    const next = current.ephemeralMessage?.message ||
+      current.documentWithCaptionMessage?.message ||
+      current.viewOnceMessage?.message ||
+      current.viewOnceMessageV2?.message;
+    if (!next) break;
+    current = next;
   }
-  return current || {};
+  return current;
 }
 
 function mediaFromMessage(message) {
   const node = unwrap(message);
-  for (const key of ['videoMessage', 'audioMessage', 'imageMessage', 'documentMessage']) {
-    if (node?.[key]) return { node: node[key], type: key.replace('Message', '') };
+  for (const key of ['videoMessage', 'audioMessage', 'documentMessage']) {
+    if (node?.[key]) return { node: node[key], type: key.replace('Message', ''), key };
   }
   return null;
 }
 
-function quotedMedia(ctx) {
+function findMedia(ctx) {
   const current = mediaFromMessage(ctx.m.message);
   if (current) return current;
-  const context = ctx.m.message?.extendedTextMessage?.contextInfo ||
-    ctx.m.message?.imageMessage?.contextInfo ||
-    ctx.m.message?.videoMessage?.contextInfo ||
-    ctx.m.message?.documentMessage?.contextInfo;
+
+  const outer = ctx.m.message || {};
+  const context = outer.extendedTextMessage?.contextInfo ||
+    outer.imageMessage?.contextInfo ||
+    outer.videoMessage?.contextInfo ||
+    outer.audioMessage?.contextInfo ||
+    outer.documentMessage?.contextInfo;
   return mediaFromMessage(context?.quotedMessage);
 }
 
-async function downloadQuoted(ctx) {
-  const found = quotedMedia(ctx);
-  if (!found) throw new Error('Media file එකකට reply කරලා .tourl යවන්න.');
-  const stream = await downloadContentFromMessage(found.node, found.type);
+async function readStream(stream) {
   const chunks = [];
   let size = 0;
   for await (const chunk of stream) {
     size += chunk.length;
-    if (size > 64 * 1024 * 1024) throw new Error('Media file එක 64 MB limit එක ඉක්මවා ඇත.');
-    chunks.push(chunk);
+    if (size > 150 * 1024 * 1024) throw new Error('Media file එක 150 MB limit එක ඉක්මවා ඇත.');
+    chunks.push(Buffer.from(chunk));
   }
   const buffer = Buffer.concat(chunks);
   if (!buffer.length) throw new Error('WhatsApp media download එක හිස්.');
-  const mime = found.node.mimetype || 'application/octet-stream';
-  const name = found.node.fileName || ('whatsapp-' + Date.now());
-  return { buffer, mime, name };
+  return buffer;
 }
 
-async function uploadAndLink(ctx) {
-  const { buffer, mime, name } = await downloadQuoted(ctx);
-  await ctx.reply('⏳ DNUZ upload host එකට media upload කරනවා...');
-  const uploaded = await uploadToUrl(buffer, name, mime, 0);
-  await ctx.reply('✅ *URL ready*\n\n🔗 ' + uploaded.url + '\n\nNo media was saved by the bot. Paste this link into .vcall or .acall with the recipient number.');
+async function downloadMedia(found) {
+  if (!found.node?.url && !found.node?.directPath) {
+    throw new Error('Quoted media එකේ WhatsApp download path එක නැහැ. Senderගෙන් media එක නැවත normal media එකක් ලෙස එවන්න කියන්න.');
+  }
+  return readStream(await downloadContentFromMessage(found.node, found.type));
 }
 
 export default {
   name: 'tourl',
-  aliases: [],
+  aliases: ['callmedia'],
   ownerOnly: true,
+  desc: 'Prepare latest local audio/video media for .acall and .vcall',
   async run(ctx) {
-    return uploadAndLink(ctx);
+    const found = findMedia(ctx);
+    if (!found) return ctx.reply('Audio/video එකකට reply කරලා .tourl යවන්න. Image files call media ලෙස භාවිතා කරන්න බැහැ.');
+
+    try {
+      const buffer = await downloadMedia(found);
+      const mime = found.node.mimetype || (found.type === 'video' ? 'video/mp4' : 'audio/ogg');
+      const name = found.node.fileName || `whatsapp-${Date.now()}`;
+      const saved = saveLatestCallMedia(buffer, mime, name);
+      const sizeMb = (saved.size / 1024 / 1024).toFixed(2);
+      return ctx.reply(
+        `✅ *Call media ready*\n\n` +
+        `📁 Type: ${found.type.toUpperCase()}\n` +
+        `📦 Size: ${sizeMb} MB\n` +
+        `🔒 Saved locally for this bot runtime — DNUZ public URL එකක් අවශ්‍ය නැහැ.\n\n` +
+        `Use:\n` +
+        `▫️ .acall 94771234567\n` +
+        `▫️ .vcall 94771234567 (video file එකක් නම්)\n\n` +
+        `අලුත් media එකක් .tourl කළාම latest media එක replace වෙනවා.`
+      );
+    } catch (error) {
+      return ctx.reply('⚠️ .tourl media download failed: ' + (error?.message || 'unknown error'));
+    }
   }
 };
