@@ -211,12 +211,11 @@ async function downloadFile(url, file) {
             try {
                 response = await fetch(candidate, {
                     redirect: 'follow',
+                    // Do not send synthetic Origin/Referer or Range headers.
+                    // Some object-storage/CDN hosts reject server-side hotlink headers with 403.
                     headers: {
                         'User-Agent': UA,
-                        Accept: 'video/mp4,audio/*,application/octet-stream,*/*',
-                        ...(new URL(candidate).hostname.endsWith('dnuz.top')
-                            ? { Referer: new URL(candidate).origin + '/', Origin: new URL(candidate).origin }
-                            : {})
+                        Accept: 'video/mp4,audio/*,application/octet-stream,*/*'
                     },
                     signal: AbortSignal.timeout(60000),
                 });
