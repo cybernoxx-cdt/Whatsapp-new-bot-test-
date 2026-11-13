@@ -37,7 +37,7 @@ export default {
     },
 
     voip: {
-        logLevel: 'media',
+        logLevel: 'warn',
         maxConcurrentCalls: 3,
         callResolution: '480p',
     },
