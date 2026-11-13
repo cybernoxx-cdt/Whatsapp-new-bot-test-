@@ -144,6 +144,16 @@ export async function getPackMedia(pack, kind) {
   }).sort({ createdAt: -1 }).lean();
 }
 
+export async function getPackMediaCandidates(pack, kind, limit = 5) {
+  if (mongoose.connection.readyState !== 1) throw new Error('MongoDB connection is required for URL metadata and media packs.');
+  const safeLimit = Math.max(1, Math.min(10, Number(limit) || 5));
+  return MediaAsset.find({
+    pack: String(pack).trim().toLowerCase(),
+    kind,
+    url: { $regex: '^https://', $options: 'i' }
+  }).sort({ createdAt: -1 }).limit(safeLimit).lean();
+}
+
 export async function listPacks() {
   if (mongoose.connection.readyState !== 1) throw new Error('MongoDB connection is required for URL metadata and media packs.');
   return MediaAsset.aggregate([
