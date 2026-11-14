@@ -406,19 +406,44 @@ function watchCall(call, label) {
 // Make sure the call really ends when the media is over (library has no end-timer for video + loops audio).
 // startNow=true for incoming calls (already connected); otherwise the timer starts when the other side answers.
 async function armAutoHangup(call, file, label, startNow = false) {
-    const ms = await mediaDurationMs(file);
-    if (!ms) return;
-    let timer = null;
-    const start = () => {
-        if (timer) return;
-        timer = setTimeout(() => {
-            console.log(`⏹️ ${label}: media finished → hangup`);
-            call.hangup().catch(() => {});
-        }, ms + 3000);
+    // Attach listeners before probing media: the peer can answer while ffprobe runs.
+    let mediaTimer = null;
+    let answerTimer = null;
+    let finished = false;
+    const safeHangup = async (reason) => {
+        if (finished) return;
+        finished = true;
+        if (mediaTimer) clearTimeout(mediaTimer);
+        if (answerTimer) clearTimeout(answerTimer);
+        console.log(`⏹️ ${label}: ${reason} → hangup`);
+        try { await call.hangup(); } catch (error) {
+            console.log(`⚠️ ${label}: hangup failed:`, error?.message || error);
+        }
     };
-    call.on('connected', start);
-    call.on('ended', () => { if (timer) clearTimeout(timer); });
-    if (startNow) start();
+    const startMediaTimer = async () => {
+        if (finished || mediaTimer) return;
+        if (answerTimer) { clearTimeout(answerTimer); answerTimer = null; }
+        const ms = await mediaDurationMs(file);
+        if (finished) return;
+        if (!ms) {
+            // Unknown duration must not leave a call occupying a slot forever.
+            mediaTimer = setTimeout(() => safeHangup('maximum call duration reached'), 10 * 60 * 1000);
+            return;
+        }
+        mediaTimer = setTimeout(() => safeHangup('media finished'), Math.min(ms + 5000, 10 * 60 * 1000));
+    };
+    call.on('connected', () => { void startMediaTimer(); });
+    call.on('ended', () => {
+        finished = true;
+        if (mediaTimer) clearTimeout(mediaTimer);
+        if (answerTimer) clearTimeout(answerTimer);
+    });
+    // Ringing calls which are never answered must release their VoIP slot.
+    if (!startNow) {
+        answerTimer = setTimeout(() => safeHangup('answer timeout (90s)'), 90 * 1000);
+    } else {
+        void startMediaTimer();
+    }
 }
 
 async function playAudioOnCall(voip, callId, url) {
@@ -602,16 +627,24 @@ let voipInitPromise = null;     // resolves only after Voip.listen() succeeds
 let manualDialing = 0;          // .vcall / .acall වලින් යවන calls auto-handler එකෙන් ignore කරන්න
 let dialStartQueue = Promise.resolve(); // serialize call-slot checks so parallel targets cannot race
 
+function getActiveVoipCalls(voip) {
+    if (!Array.isArray(voip?.calls)) return 0;
+    return voip.calls.filter(call => {
+        const id = call?.callId ?? call?.id;
+        return id && !endedCalls.has(id);
+    }).length;
+}
+
 async function waitForVoipSlot(voip, timeoutMs = 120000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         if (VOIP !== voip) throw new Error('WhatsApp VoIP connection changed; retry the command.');
-        const active = Array.isArray(voip.calls) ? voip.calls.length : 0;
+        const active = getActiveVoipCalls(voip);
         if (active < MAX_CONCURRENT_CALLS) return;
         await sleep(500);
     }
-    const active = Array.isArray(voip.calls) ? voip.calls.length : 0;
-    throw new Error(`Call slots are still full (${active}/${MAX_CONCURRENT_CALLS}). Existing calls may still be ringing; wait for them to end or restart the bot if they are stuck.`);
+    const active = getActiveVoipCalls(voip);
+    throw new Error(`Call slots are still full (${active}/${MAX_CONCURRENT_CALLS}). A call is still active or has not emitted its ended event; check the call logs and connection.`);
 }
 
 function queueVoipDial(voip, number, file, kind) {
@@ -1117,9 +1150,24 @@ async function start() {
         }
 
         if (connection === 'close') {
+            // Detach and shut down the old VoIP engine so its calls/slots/listeners
+            // cannot leak into the next WhatsApp socket after reconnect.
+            const staleVoip = VOIP;
             VOIP = null;
             voipInitPromise = null;
             voipReady = false;
+            if (staleVoip) {
+                try { await staleVoip.end(); }
+                catch (error) { console.log('Old VoIP cleanup error:', error?.message || error); }
+            }
+            for (const [callId, resolve] of waiters) {
+                try { resolve(); } catch {}
+                waiters.delete(callId);
+                endedCalls.add(callId);
+            }
+            handled.clear();
+            accepting.clear();
+            pendingOut.clear();
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === DisconnectReason.loggedOut) {
                 console.log('❌ Logged out. Session delete කළා - bot එක restart කළාම අලුත් pair code එකක් එයි.');
