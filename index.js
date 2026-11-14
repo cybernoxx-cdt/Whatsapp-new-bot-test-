@@ -67,6 +67,9 @@ console.error = (...args) => safeLog('error', args);
 
 // ================= SETTINGS =================
 const { prefix, texts } = config;
+const MAX_CONCURRENT_CALLS = Number.isInteger(config.voip?.maxConcurrentCalls)
+    ? Math.max(1, Math.min(5, config.voip.maxConcurrentCalls))
+    : 2;
 const clean = (n) => String(n).replace(/[^0-9]/g, '');
 const NUMBER = clean(config.number);
 const OWNERS = [...new Set([NUMBER, ...config.owners.map(clean), clean(process.env.OWNER_NUMBER || '')].filter(Boolean))];
@@ -130,7 +133,7 @@ const MENU_TEXT = () =>
 ▫️ \`${prefix}vcall 94771234567\` — one video call
 ▫️ \`${prefix}vcall 94771234567,94777654321\` — video calls to 2 numbers
 ▫️ \`${prefix}acall 94771234567,94777654321\` — audio calls to 2 numbers
-▫️ One command accepts a maximum of 2 numbers
+▫️ One command accepts up to ${MAX_CONCURRENT_CALLS} numbers
 ▫️ \`${prefix}tourl\` — reply to audio/video to save latest local call media
 ▫️ \`${prefix}self\` / \`${prefix}public\` — bot access mode
 ▫️ \`${prefix}call-menu\` — මේ menu එක
@@ -762,21 +765,21 @@ async function dialOut(kind, number, url) {
 async function handleDial(sock, m, kind, rawArgs, reply) {
     const label = kind === 'video' ? 'Video' : 'Audio';
     const cmd = kind === 'video' ? 'vcall' : 'acall';
-    // Accept one number or exactly two numbers; optional URL is supported for one recipient.
+    // Accept up to the configured call limit; an optional media URL is shared by all targets.
     const input = rawArgs.join(' ').trim();
     const numberPart = input.split(/\s+(?=https?:\/\/)/i)[0];
     const url = input.match(/\s+(https?:\/\/\S+)/i)?.[1];
     const numbers = [...numberPart.matchAll(/\+?\d{8,15}/g)].map(match => clean(match[0]));
     const residue = numberPart.replace(/[()+\s,;\d-]/g, '');
-    if (residue || numbers.length < 1 || numbers.length > 2 || numbers.some(n => n.length < 8 || n.length > 15)) {
-        await reply(`❌ Number format එක වැරදියි. එක number එකක් හෝ numbers දෙකක් පමණක් දෙන්න.\n\n*Examples:*\n\`${prefix}${cmd} 94771234567\`\n\`${prefix}${cmd} 94771234567,94777654321\`\n\`${prefix}${cmd} (94771234567),(94777654321)\`\n\n${texts.footer}`);
+    if (residue || numbers.length < 1 || numbers.length > MAX_CONCURRENT_CALLS || numbers.some(n => n.length < 8 || n.length > 15)) {
+        await reply(`❌ Number format එක වැරදියි. 1 සිට ${MAX_CONCURRENT_CALLS} දක්වා numbers දෙන්න.\n\n*Examples:*\n\`${prefix}${cmd} 94771234567\`\n\`${prefix}${cmd} 94771234567,94777654321\`\n\`${prefix}${cmd} (94771234567),(94777654321)\`\n\n${texts.footer}`);
         return;
     }
     if (new Set(numbers).size !== numbers.length) return reply('❌ එකම number එක දෙවරක් දාන්න එපා.');
     if (url && !isHttpUrl(url)) return reply(`❌ URL එක http:// හෝ https:// වලින් පටන් ගන්න direct link එකක් විය යුතුයි.\n\n${texts.footer}`);
     const latest = getLatestCallMedia();
     if (!url && !latest?.file) return reply(`❌ Latest .tourl media එකක් නැහැ. Audio/Video එකකට reply කරලා .tourl යවන්න.`);
-    await reply(`📞 *${label} call request*\n👥 Targets: ${numbers.map(n => '+' + n).join(' සහ ')}\n📡 Calls දෙකක් දක්වා ආරම්භ කරනවා...`);
+    await reply(`📞 *${label} call request*\n👥 Targets: ${numbers.map(n => '+' + n).join(' සහ ')}\n📡 Configured limit: ${MAX_CONCURRENT_CALLS} simultaneous calls.`);
     const results = await Promise.allSettled(numbers.map(number => dialOut(kind, number, url)));
     const lines = results.map((result, index) => result.status === 'fulfilled'
         ? `✅ +${numbers[index]} — ringing`
