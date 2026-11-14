@@ -127,8 +127,10 @@ const MENU_TEXT = () =>
 ▫️ \`${prefix}call\` — status බලන්න
 
 *Call යවන්න (owner)*
-▫️ \`${prefix}vcall 94771234567\` — video call using latest .tourl media
-▫️ \`${prefix}acall 94771234567\` — audio call using latest .tourl media
+▫️ \`${prefix}vcall 94771234567\` — one video call
+▫️ \`${prefix}vcall 94771234567,94777654321\` — video calls to 2 numbers
+▫️ \`${prefix}acall 94771234567,94777654321\` — audio calls to 2 numbers
+▫️ One command accepts a maximum of 2 numbers
 ▫️ \`${prefix}tourl\` — reply to audio/video to save latest local call media
 ▫️ \`${prefix}self\` / \`${prefix}public\` — bot access mode
 ▫️ \`${prefix}call-menu\` — මේ menu එක
@@ -760,32 +762,26 @@ async function dialOut(kind, number, url) {
 async function handleDial(sock, m, kind, rawArgs, reply) {
     const label = kind === 'video' ? 'Video' : 'Audio';
     const cmd = kind === 'video' ? 'vcall' : 'acall';
-    let number = clean(rawArgs[0] || '');
-    let url = rawArgs[1];
-    if (number.length < 8 || number.length > 15) {
-        await reply(`❌ Number එක වැරදියි.\n\n*Use:* \`${prefix}${cmd} 94771234567 ${kind === 'video' ? 'https://site.com/video.mp4' : 'https://site.com/audio.mp3'}\`\n(country code එක්ක, "+" නැතුව)\n\n${texts.footer}`);
+    // Accept one number or exactly two numbers; optional URL is supported for one recipient.
+    const input = rawArgs.join(' ').trim();
+    const numberPart = input.split(/\s+(?=https?:\/\/)/i)[0];
+    const url = input.match(/\s+(https?:\/\/\S+)/i)?.[1];
+    const numbers = [...numberPart.matchAll(/\+?\d{8,15}/g)].map(match => clean(match[0]));
+    const residue = numberPart.replace(/[()+\s,;\d-]/g, '');
+    if (residue || numbers.length < 1 || numbers.length > 2 || numbers.some(n => n.length < 8 || n.length > 15)) {
+        await reply(`❌ Number format එක වැරදියි. එක number එකක් හෝ numbers දෙකක් පමණක් දෙන්න.\n\n*Examples:*\n\`${prefix}${cmd} 94771234567\`\n\`${prefix}${cmd} 94771234567,94777654321\`\n\`${prefix}${cmd} (94771234567),(94777654321)\`\n\n${texts.footer}`);
         return;
     }
-    if (url && !isHttpUrl(url)) {
-        await reply(`❌ URL එක වැරදියි. \`http://\` හෝ \`https://\` වලින් පටන් ගන්න direct link එකක් දෙන්න.\n\n${texts.footer}`);
-        return;
-    }
-
+    if (new Set(numbers).size !== numbers.length) return reply('❌ එකම number එක දෙවරක් දාන්න එපා.');
+    if (url && !isHttpUrl(url)) return reply(`❌ URL එක http:// හෝ https:// වලින් පටන් ගන්න direct link එකක් විය යුතුයි.\n\n${texts.footer}`);
     const latest = getLatestCallMedia();
-    if (!url && !latest?.file) {
-        await reply(`❌ Latest .tourl media එකක් හමු වුණේ නැහැ. Audio/Video එකකට reply කරලා .tourl යවන්න. ඉන්පසු .${cmd} ${number} භාවිතා කරන්න.`);
-        return;
-    }
-    await reply(url
-        ? `📞 ${label} call එකක් *${number}* ට යවනවා...\\n🔗 Direct URL භාවිතා කරනවා.`
-        : `📞 ${label} call එකක් *${number}* ට යවනවා...\\n📁 Latest .tourl local media භාවිතා කරනවා.`);
-    try {
-        await dialOut(kind, number, url);
-        await reply(`✅ ${label} call එක ring වෙනවා → *${number}*\nAnswer කළාම media එක play වෙලා call එක auto end වෙනවා.\n\n${texts.footer}`);
-    } catch (e) {
-        console.log(`${cmd} error:`, e.message);
-        await reply(`⚠️ ${label} call එක යවන්න බැරි වුණා:\n${e.message}\n\n${texts.footer}`);
-    }
+    if (!url && !latest?.file) return reply(`❌ Latest .tourl media එකක් නැහැ. Audio/Video එකකට reply කරලා .tourl යවන්න.`);
+    await reply(`📞 *${label} call request*\n👥 Targets: ${numbers.map(n => '+' + n).join(' සහ ')}\n📡 Calls දෙකක් දක්වා ආරම්භ කරනවා...`);
+    const results = await Promise.allSettled(numbers.map(number => dialOut(kind, number, url)));
+    const lines = results.map((result, index) => result.status === 'fulfilled'
+        ? `✅ +${numbers[index]} — ringing`
+        : `❌ +${numbers[index]} — ${result.reason?.message || 'Call failed'}`);
+    await reply(`╭━━〔 ✦ ${label.toUpperCase()} CALLS 〕━━╮\n${lines.join('\n')}\n╰━━━━━━━━━━━━━━━━━━╯\n${texts.footer}`);
 }
 
 // ================= PLUGINS =================
