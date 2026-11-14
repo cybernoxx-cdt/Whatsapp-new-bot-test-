@@ -388,11 +388,6 @@ function mediaDurationMs(file) {
     });
 }
 
-// Options used for EVERY call we place / answer:
-//  - autoDowngrade:false → never drop to audio just because the other person's camera is off (this was the "sound only" bug)
-//  - autoEndCall:true, loop:false → hang up when the media finishes (no repeating)
-const CALL_OPTS = { autoEndCall: true, loop: false, autoDowngrade: false };
-
 // Logs the whole life of a call so we can see exactly where video stops (send these lines when reporting a problem)
 function watchCall(call, label) {
     for (const ev of ['ringing', 'connected', 'item', 'peer_video', 'downgraded', 'playlist_ended', 'playlist_looped', 'audio_finished']) {
@@ -686,12 +681,11 @@ function queueVoipDial(voip, number, file, kind) {
         await waitForVoipSlot(voip);
         if (VOIP !== voip) throw new Error('VoIP connection changed before dialing.');
 
-        // Follow the exact single-media overloads documented by @dnuzi/baileys:
-        // audio: voip.call(number, localFile)
-        // video: voip.call(number, localFile, resolution)
-        // The 4th options argument is documented for playlists, not single files.
+        // Use the documented single-file overloads from @dnuzi/baileys 0.1.3.
+        // Video must be passed as a single local file with the resolution as arg 3;
+        // wrapping it in a one-item playlist selects a different API path.
         if (kind === 'video') {
-            return voip.call(number, [file], config.voip.callResolution || '480p', CALL_OPTS);
+            return voip.call(number, file, config.voip.callResolution || '480p');
         }
         return voip.call(number, file);
     });
