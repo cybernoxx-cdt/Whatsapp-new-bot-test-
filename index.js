@@ -67,8 +67,9 @@ console.error = (...args) => safeLog('error', args);
 
 // ================= SETTINGS =================
 const { prefix, texts } = config;
-const MAX_CONCURRENT_CALLS = Number.isInteger(config.voip?.maxConcurrentCalls)
-    ? Math.max(1, Math.min(5, config.voip.maxConcurrentCalls))
+const configuredCallLimit = Number(config.voip?.maxConcurrentCalls ?? 2);
+const MAX_CONCURRENT_CALLS = Number.isFinite(configuredCallLimit)
+    ? Math.max(1, Math.min(20, Math.floor(configuredCallLimit)))
     : 2;
 const clean = (n) => String(n).replace(/[^0-9]/g, '');
 const NUMBER = clean(config.number);
@@ -599,6 +600,32 @@ const pendingOut = new Map();   // outgoing calls waiting for the other side to 
 let VOIP = null;                // current Voip instance (set after connect)
 let voipInitPromise = null;     // resolves only after Voip.listen() succeeds
 let manualDialing = 0;          // .vcall / .acall වලින් යවන calls auto-handler එකෙන් ignore කරන්න
+let dialStartQueue = Promise.resolve(); // serialize call-slot checks so parallel targets cannot race
+
+async function waitForVoipSlot(voip, timeoutMs = 120000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (VOIP !== voip) throw new Error('WhatsApp VoIP connection changed; retry the command.');
+        const active = Array.isArray(voip.calls) ? voip.calls.length : 0;
+        if (active < MAX_CONCURRENT_CALLS) return;
+        await sleep(500);
+    }
+    const active = Array.isArray(voip.calls) ? voip.calls.length : 0;
+    throw new Error(`Call slots are still full (${active}/${MAX_CONCURRENT_CALLS}). Existing calls may still be ringing; wait for them to end or restart the bot if they are stuck.`);
+}
+
+function queueVoipDial(voip, number, file, kind) {
+    const task = dialStartQueue.then(async () => {
+        await waitForVoipSlot(voip);
+        if (VOIP !== voip) throw new Error('VoIP connection changed before dialing.');
+        const options = { ...CALL_OPTS, autoEndCall: true, loop: false };
+        return kind === 'video'
+            ? voip.call(number, file, config.voip.callResolution || '480p', options)
+            : voip.call(number, file, undefined, options);
+    });
+    dialStartQueue = task.then(() => undefined, () => undefined);
+    return task;
+}
 
 async function runPlayback(voip, sock, callId, isVideo, replyJid, mediaUrl) {
     if (handled.has(callId)) return;
@@ -752,10 +779,8 @@ async function dialOut(kind, number, url) {
     // @dnuzi/baileys 0.1.3 accepts a local media path directly for both
     // audio and video. Passing { audio: file } plus an undefined resolution
     // was ambiguous in the overload and could leave the call with no media.
-    const callOptions = { ...CALL_OPTS, autoEndCall: true, loop: false };
-    const call = prepared.kind === 'video'
-        ? await VOIP.call(number, prepared.file, config.voip.callResolution || '480p', callOptions)
-        : await VOIP.call(number, prepared.file, undefined, callOptions);
+    const voip = VOIP;
+    const call = await queueVoipDial(voip, number, prepared.file, prepared.kind);
     const callId = call?.callId ?? call?.id;
     console.log('📡 VOIP.call returned:', callId || 'no callId', '| target:', call?.target || number);
     if (!callId) throw new Error('VOIP.call() did not return a callId; inspect VOIP call_error logs.');
