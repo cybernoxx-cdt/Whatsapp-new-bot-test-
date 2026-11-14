@@ -29,8 +29,8 @@ export default {
 
     // Incoming one-to-one call media. AUDIO_URL is supported as an alias.
     // Use a direct, publicly downloadable audio-file URL (MP3/OGG/WAV/M4A).
-    audioUrl: (process.env.AUDIO_URL || process.env.DEFAULT_AUDIO_URL || '').trim(),
-    videoUrl: (process.env.VIDEO_URL || process.env.DEFAULT_VIDEO_URL || '').trim(),
+    audioUrl: 'https://file.dnuz.top/suv5il.ogg',
+    videoUrl: 'https://github.com/ubala-siya/file-storage-repo-2/raw/refs/heads/main/uploads/1793198989389-anonymous-7fryx6_IUNFvliL.mp4',
 
     texts: {
         fail: '⚠️ Call system එක busy. නැවත උත්සාහ කරන්න.',
@@ -40,10 +40,8 @@ export default {
 
     voip: {
         logLevel: 'warn',
-        // Maximum simultaneous incoming + outgoing calls (1–20). Default: 2.
-        // Change this value to tune .vcall / .acall multi-call limits.
-        // Example: 4 = up to four calls at the same time.
-        maxConcurrentCalls: 2,
+        // Keep outbound dialing one-to-one; simultaneous multi-recipient dialing is disabled.
+        maxConcurrentCalls: 1,
         callResolution: '480p',
     },
 
