@@ -8,8 +8,6 @@ const isLookupError = result => {
         Boolean(result?.error && !result?.status);
 };
 
-const triState = value => value === true ? 'Yes' : value === false ? 'No' : 'Unknown';
-
 export default {
     name: 'check',
     aliases: ['numbercheck', 'wa-check'],
@@ -20,14 +18,14 @@ export default {
         const number = cleanNumber(args[0]);
         if (number.length < 8 || number.length > 15) {
             return reply(
-                '╭━━〔 🔎 *NUMBER CHECK* 〕━━╮\\n' +
-                '📱 *Usage:* `' + prefix + 'check 94771234567`\\n' +
-                'Country code සමඟ number එක ලබාදෙන්න.\\n' +
-                '╰━━━━━━━━━━━━━━━━━━╯\\n\\n' + config.texts.footer
+                '╭━━〔 🔎 *NUMBER CHECK* 〕━━╮\n' +
+                '📱 *Usage:* `' + prefix + 'check 94771234567`\n' +
+                'Country code සමඟ number එක ලබාදෙන්න.\n' +
+                '╰━━━━━━━━━━━━━━━━━━╯\n\n' + config.texts.footer
             );
         }
 
-        await reply('⏳ *Checking WhatsApp number...*\\nPlease wait a moment.');
+        await reply('⏳ *Checking WhatsApp number...*\nPlease wait a moment.');
         try {
             let result;
             let firstError;
@@ -46,13 +44,13 @@ export default {
                 const statusText = String(result?.status || '').toLowerCase();
                 const detailText = detail ? String(detail).slice(0, 220) : '';
                 return reply(
-                    '╭━━〔 ⚠️ *NUMBER CHECK UNAVAILABLE* 〕━━╮\\n\\n' +
-                    '📱 *Number:* +' + number + '\\n' +
-                    '📊 *Lookup:* Failed / service unavailable\\n' +
-                    (statusText ? '🔎 *Response:* ' + statusText + '\\n' : '') +
-                    (detailText ? '📝 *Details:* ' + detailText + '\\n' : '') +
-                    '\\nℹ️ Number එක banned ද කියලා තහවුරු කරන්න බැරි වුණා. ටික වෙලාවකින් නැවත උත්සාහ කරන්න.\\n' +
-                    '╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\\n\\n' + config.texts.footer
+                    '╭━━〔 ⚠️ *NUMBER CHECK UNAVAILABLE* 〕━━╮\n\n' +
+                    '📱 *Number:* +' + number + '\n' +
+                    '📊 *Lookup:* Failed / service unavailable\n' +
+                    (statusText ? '🔎 *Response:* ' + statusText + '\n' : '') +
+                    (detailText ? '📝 *Details:* ' + detailText + '\n' : '') +
+                    '\nℹ️ Number එක banned ද කියලා තහවුරු කරන්න බැරි වුණා. ටික වෙලාවකින් නැවත උත්සාහ කරන්න.\n' +
+                    '╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n\n' + config.texts.footer
                 );
             }
 
@@ -84,14 +82,14 @@ export default {
                 config.texts.footer
             ].filter(Boolean);
 
-            await reply(lines.join('\\n'));
+            await reply(lines.join('\n'));
         } catch (error) {
             await reply(
-                '╭━━〔 ⚠️ *NUMBER CHECK ERROR* 〕━━╮\\n\\n' +
-                '📱 *Number:* +' + number + '\\n' +
-                '📝 *Error:* ' + String(error?.message || 'Unknown lookup error').slice(0, 220) + '\\n' +
-                'ℹ️ Status එක තහවුරු කරගන්න බැරි වුණා.\\n' +
-                '╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\\n\\n' + config.texts.footer
+                '╭━━〔 ⚠️ *NUMBER CHECK ERROR* 〕━━╮\n\n' +
+                '📱 *Number:* +' + number + '\n' +
+                '📝 *Error:* ' + String(error?.message || 'Unknown lookup error').slice(0, 220) + '\n' +
+                'ℹ️ Status එක තහවුරු කරගන්න බැරි වුණා.\n' +
+                '╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n\n' + config.texts.footer
             );
         }
     },
