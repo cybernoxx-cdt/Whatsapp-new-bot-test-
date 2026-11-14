@@ -406,46 +406,83 @@ function watchCall(call, label) {
 // Make sure the call really ends when the media is over (library has no end-timer for video + loops audio).
 // startNow=true for incoming calls (already connected); otherwise the timer starts when the other side answers.
 async function armAutoHangup(call, file, label, startNow = false) {
-    // Attach listeners before probing media: the peer can answer while ffprobe runs.
+    // A connected event may be emitted more than once. Lock before awaiting
+    // ffprobe so duplicate events can never create competing hangup timers.
     let mediaTimer = null;
     let answerTimer = null;
+    let mediaTimerStarting = false;
     let finished = false;
+
+    const clearTimers = () => {
+        if (mediaTimer) clearTimeout(mediaTimer);
+        if (answerTimer) clearTimeout(answerTimer);
+        mediaTimer = null;
+        answerTimer = null;
+    };
+
     const safeHangup = async (reason) => {
         if (finished) return;
         finished = true;
-        if (mediaTimer) clearTimeout(mediaTimer);
-        if (answerTimer) clearTimeout(answerTimer);
+        clearTimers();
         console.log(`⏹️ ${label}: ${reason} → hangup`);
-        try { await call.hangup(); } catch (error) {
+        try {
+            await call.hangup();
+        } catch (error) {
             console.log(`⚠️ ${label}: hangup failed:`, error?.message || error);
         }
     };
+
     const startMediaTimer = async () => {
-        if (finished || mediaTimer) return;
-        if (answerTimer) { clearTimeout(answerTimer); answerTimer = null; }
-        const ms = await mediaDurationMs(file);
-        if (finished) return;
-        if (!ms) {
-            // Unknown duration must not leave a call occupying a slot forever.
-            mediaTimer = setTimeout(() => safeHangup('maximum call duration reached'), 10 * 60 * 1000);
-            return;
+        if (finished || mediaTimer || mediaTimerStarting) return;
+        mediaTimerStarting = true;
+        if (answerTimer) {
+            clearTimeout(answerTimer);
+            answerTimer = null;
         }
-        mediaTimer = setTimeout(() => safeHangup('media finished'), Math.min(ms + 5000, 10 * 60 * 1000));
+
+        try {
+            const ms = await mediaDurationMs(file);
+            if (finished || mediaTimer) return;
+
+            // The media validator allows files up to 15 minutes. Do not cap
+            // the watchdog at 10 minutes, otherwise longer audio is cut short.
+            const fallbackMs = 15 * 60 * 1000;
+            const playbackMs = ms > 0 ? ms : fallbackMs;
+            mediaTimer = setTimeout(() => {
+                void safeHangup(ms > 0 ? 'media duration elapsed' : 'maximum call duration reached');
+            }, playbackMs + 15000);
+
+            console.log(`⏱️ ${label}: playback watchdog armed for ${Math.ceil(playbackMs / 1000)}s`);
+        } catch (error) {
+            console.log(`⚠️ ${label}: duration check failed:`, error?.message || error);
+            if (!finished && !mediaTimer) {
+                mediaTimer = setTimeout(() => {
+                    void safeHangup('maximum call duration reached');
+                }, 15 * 60 * 1000);
+            }
+        } finally {
+            mediaTimerStarting = false;
+        }
     };
-    call.on('connected', () => { void startMediaTimer(); });
+
+    call.on('connected', () => {
+        void startMediaTimer();
+    });
+
     call.on('ended', () => {
         finished = true;
-        if (mediaTimer) clearTimeout(mediaTimer);
-        if (answerTimer) clearTimeout(answerTimer);
+        clearTimers();
     });
-    // Ringing calls which are never answered must release their VoIP slot.
+
+    // If the remote party never answers, release the call slot.
     if (!startNow) {
-        answerTimer = setTimeout(() => safeHangup('answer timeout (90s)'), 90 * 1000);
+        answerTimer = setTimeout(() => {
+            void safeHangup('answer timeout (90s)');
+        }, 90 * 1000);
     } else {
         void startMediaTimer();
     }
 }
-
 async function playAudioOnCall(voip, callId, url) {
     const co = voip.coordinator;
     const all = await getPcm(url);
