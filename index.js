@@ -76,8 +76,8 @@ const NUMBER = clean(config.number);
 const OWNERS = [...new Set([NUMBER, ...config.owners.map(clean), clean(process.env.OWNER_NUMBER || '')].filter(Boolean))];
 const MONGODB_URI = config.mongodbUri;
 const SESSION_KEY = config.sessionKey;
-const AUDIO_URL = config.audioUrl;
-const VIDEO_URL = config.videoUrl;
+const AUDIO_URL = String(config.audioUrl || '').trim();
+const VIDEO_URL = String(config.videoUrl || '').trim();
 console.log('🧩 BUILD v5 | local-tourl-media | direct-call | video-validate | vv-reupload | self-public');
 
 // ================= BAILEYS EXPORTS =================
@@ -737,13 +737,23 @@ async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
     accepting.add(callId);
     try {
         const latest = getLatestCallMedia()?.file || '';
-        const candidates = isVideo ? [latest, VIDEO_URL] : [latest, AUDIO_URL, VIDEO_URL].filter(Boolean);
+        // Prefer the explicitly configured media for the matching call type.
+        // Never use a video URL as a fallback for an incoming audio-only call.
+        const candidates = isVideo
+            ? [VIDEO_URL, latest]
+            : [AUDIO_URL, latest];
         let prepared = null; const errors = [];
         for (const candidate of [...new Set(candidates.filter(Boolean))]) {
             try { prepared = await prepareMedia(candidate, isVideo); break; }
             catch (error) { errors.push(error.message); }
         }
-        if (!prepared) throw new Error(`Incoming ${isVideo ? 'video' : 'audio'} call සඳහා සුදුසු media එකක් නැහැ. ${errors.join(' | ')}`);
+        if (!prepared) {
+            const configured = isVideo ? VIDEO_URL : AUDIO_URL;
+            const hint = configured
+                ? 'Configured media URL එක direct/public media link එකක්ද සහ එහි නිවැරදි audio/video stream එක තිබෙනවාද පරීක්ෂා කරන්න.'
+                : `config.js runtime එකට ${isVideo ? 'VIDEO_URL / DEFAULT_VIDEO_URL' : 'AUDIO_URL / DEFAULT_AUDIO_URL'} ලබාදී නැහැ. Environment variable එක සකසන්න හෝ .tourl media එකක් සුරකින්න.`;
+            throw new Error(`Incoming ${isVideo ? 'video' : 'audio'} call සඳහා සුදුසු media එකක් නැහැ. ${hint} ${errors.join(' | ')}`);
+        }
         console.log(`📦 incoming ${isVideo ? 'video' : 'audio'} media ready:`, prepared.kind, prepared.file);
         await voip.acceptCall(callId);
         console.log('✅ Call accepted:', callId);
