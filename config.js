@@ -38,8 +38,9 @@ export default {
 
     voip: {
         logLevel: 'warn',
-        // Maximum simultaneous incoming + outgoing calls (1–5). Default: 2.
+        // Maximum simultaneous incoming + outgoing calls (1–20). Default: 2.
         // Change this value to tune .vcall / .acall multi-call limits.
+        // Example: 4 = up to four calls at the same time.
         maxConcurrentCalls: 2,
         callResolution: '480p',
     },
