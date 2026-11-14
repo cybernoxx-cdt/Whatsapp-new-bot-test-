@@ -477,30 +477,42 @@ async function armAutoHangup(call, file, label, startNow = false) {
 }
 async function playAudioOnCall(voip, callId, url) {
     const co = voip.coordinator;
+
+    // Decode before accepting the call (answerIncoming prewarms this cache).
+    // If the peer has already ended the call, never touch the released coordinator slot.
+    if (endedCalls.has(callId)) return false;
     const all = await getPcm(url);
-    if (!all.length) return false;
+    if (!all.length || endedCalls.has(callId)) return false;
+
     const file = fileCache.get(url);
     const secs = all.length / 16000;
-
     let done;
     const finished = new Promise(r => { done = r; });
     waiters.set(callId, done);
 
-    // method 1: loadAudio
     try {
+        if (endedCalls.has(callId)) return false;
         await co.loadAudio(callId, file);
         console.log('▶️ loadAudio OK, playing ~' + secs.toFixed(0) + 's');
         await Promise.race([finished, sleep((secs + 3) * 1000)]);
-        waiters.delete(callId);
-        console.log('🎵 audio finished (loadAudio)');
-        return true;
+        console.log('🎵 audio playback finished');
+        return !endedCalls.has(callId);
     } catch (e) {
         console.log('loadAudio error:', e.message);
+        // Do not attempt a fallback on a call whose coordinator slot is gone.
+        if (endedCalls.has(callId)) return false;
+    } finally {
+        if (waiters.get(callId) === done) waiters.delete(callId);
     }
 
-    // method 2: feedLiveAudio
-    try { co.setExternalAudioMode?.(callId, true); console.log('externalAudioMode ON'); }
-    catch (e) { console.log('setExternalAudioMode error:', e.message); }
+    try {
+        if (endedCalls.has(callId)) return false;
+        await co.setExternalAudioMode?.(callId, true);
+        console.log('externalAudioMode ON');
+    } catch (e) {
+        console.log('setExternalAudioMode error:', e.message);
+        if (endedCalls.has(callId)) return false;
+    }
 
     const FRAME = 320;
     let pos = 0, logged = false, failed = false;
@@ -516,7 +528,6 @@ async function playAudioOnCall(voip, callId, url) {
         }
         await sleep(20);
     }
-    waiters.delete(callId);
     console.log('🎵 audio feed finished', failed ? '(error)' : '');
     return logged;
 }
@@ -746,8 +757,31 @@ async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
             throw new Error(`Incoming ${isVideo ? 'video' : 'audio'} call සඳහා සුදුසු media එකක් නැහැ. ${hint} ${errors.join(' | ')}`);
         }
         console.log(`📦 incoming ${isVideo ? 'video' : 'audio'} media ready:`, prepared.kind, prepared.file);
+
+        // Prepare expensive FFmpeg work BEFORE answering. Previously getPcm()
+        // ran only after acceptCall(), so the peer could hang up while the bot
+        // was decoding the audio; playback then targeted an already-ended call.
+        if (endedCalls.has(callId)) {
+            console.log('⏭️ Incoming call ended before media preparation completed:', callId);
+            return;
+        }
+        const pcm = await getPcm(prepared.file);
+        if (!pcm.length) throw new Error('Media decoded to zero audio samples.');
+        if (isVideo) {
+            const localVideo = fileCache.get(prepared.file);
+            if (localVideo) await makeCallVideo(localVideo);
+        }
+        if (endedCalls.has(callId)) {
+            console.log('⏭️ Incoming call ended during media preparation:', callId);
+            return;
+        }
+
         await voip.acceptCall(callId);
         console.log('✅ Call accepted:', callId);
+        if (endedCalls.has(callId)) {
+            console.log('⏭️ Call ended immediately after acceptance; playback skipped:', callId);
+            return;
+        }
         await runPlayback(voip, sock, callId, isVideo, replyJid, prepared.file);
     } catch (e) {
         console.log('❌ Incoming call error:', e.message);
@@ -813,10 +847,16 @@ async function setupVoip(sock) {
 
 
     voip.on('call_ended', (c) => {
-        console.log('📴 Call ended', c?.callId, '| reason:', c?.endReason ?? c?.reason ?? '');
-        endedCalls.add(c?.callId);
-        pendingOut.delete(c?.callId);
-        waiters.get(c?.callId)?.();
+        const id = c?.callId;
+        console.log('📴 Call ended', id, '| reason:', c?.endReason ?? c?.reason ?? '');
+        if (id) {
+            endedCalls.add(id);
+            pendingOut.delete(id);
+            waiters.get(id)?.();
+            waiters.delete(id);
+            // Bound this guard set so long-running sessions do not grow forever.
+            if (endedCalls.size > 500) endedCalls.delete(endedCalls.values().next().value);
+        }
     });
     voip.on('call_outbound_audio_finished', (c) => {
         waiters.get(c?.callId ?? c?.call?.callId)?.();
