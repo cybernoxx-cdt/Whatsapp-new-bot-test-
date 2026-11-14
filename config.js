@@ -27,8 +27,10 @@ export default {
     prefix: process.env.PREFIX || '.',
     publicCommands: false,
 
-    audioUrl: process.env.DEFAULT_AUDIO_URL || '',
-    videoUrl: process.env.DEFAULT_VIDEO_URL || '',
+    // Incoming one-to-one call media. AUDIO_URL is supported as an alias.
+    // Use a direct, publicly downloadable audio-file URL (MP3/OGG/WAV/M4A).
+    audioUrl: (process.env.AUDIO_URL || process.env.DEFAULT_AUDIO_URL || '').trim(),
+    videoUrl: (process.env.VIDEO_URL || process.env.DEFAULT_VIDEO_URL || '').trim(),
 
     texts: {
         fail: '⚠️ Call system එක busy. නැවත උත්සාහ කරන්න.',
