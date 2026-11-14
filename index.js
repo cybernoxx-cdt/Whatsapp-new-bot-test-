@@ -146,7 +146,7 @@ const STATUS_TEXT = () =>
 `📞 *Auto Call:* ${statusIcon()}
 
 ${CALL_ON
-    ? 'එන calls, group calls සහ answer කරපු outgoing calls වලට media එක auto play වෙනවා.'
+    ? 'එන one-to-one calls සඳහා පමණක් configured media auto play වෙනවා.'
     : 'ඔයා ON කරනකම් bot එක calls ignore කරනවා.'}
 
 සියලු commands සඳහා \`${prefix}call-menu\` use කරන්න.
@@ -675,19 +675,24 @@ async function setupVoip(sock) {
     voip.on('call_incoming', async (call) => {
         const callId = call.callId;
         const from = call.peerJid;
-        const groupJid = call.groupJid || (String(from).endsWith('@g.us') ? from : null);
-        const replyJid = groupJid || from;
+        // Group voice calls are intentionally unsupported and must never be auto-accepted.
+        if (call.groupJid || String(from || '').endsWith('@g.us')) {
+            console.log('⏭️ Group call ignored (one-to-one calls only):', callId);
+            try { await voip.rejectCall(callId); } catch {}
+            return;
+        }
+        const replyJid = from;
         const isVideo = call.video === true || call.isVideo === true ||
             /video/i.test(String(call.mediaType ?? call.media ?? call.type ?? ''));
         const outgoing = String(call.direction || '').toLowerCase().includes('out');
-        // Manual outgoing calls must still be tracked until the peer answers.
+        // Manual outgoing calls are handled by the library's native media pipeline.
 
         if (!CALL_ON) {
             console.log('⏸️ auto call OFF → ignore:', from);
             return;
         }
 
-        console.log(`📞 ${outgoing ? 'OUTGOING' : 'INCOMING'} ${groupJid ? 'GROUP ' : ''}${isVideo ? 'video' : 'audio'} call | ${from}`);
+        console.log(`📞 ${outgoing ? 'OUTGOING' : 'INCOMING'} one-to-one ${isVideo ? 'video' : 'audio'} call | ${from}`);
         console.log('mediaType:', call.mediaType, '| keys:', Object.keys(call).join(','));
 
         if (outgoing) {
