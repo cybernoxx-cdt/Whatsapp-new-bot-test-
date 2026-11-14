@@ -1046,19 +1046,22 @@ async function start() {
                 if (ownerNumber) {
                     await sock.sendMessage(ownerNumber + '@s.whatsapp.net', {
                         image: { url: CONNECT_IMAGE_URL },
-                        caption: `╭━━━〔 🥵 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 💋 〕━━━╮
+                        caption: `╭━━━〔 ✦ 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 ✦ 〕━━━╮
 ┃
-┃  ✅ *BOT CONNECTED SUCCESSFULLY*
-┃
-┃  🤖 *Name:* ${config.botName}
-┃  📡 *Status:* ONLINE
+┃  ✅ *SYSTEM CONNECTED*
+┃  ━━━━━━━━━━━━━━━━━━━
+┃  🤖 *Bot:* ${config.botName}
+┃  📡 *Status:* 🟢 ONLINE
 ┃  🔐 *Mode:* ${BOT_MODE.toUpperCase()}
-┃  📞 *Auto Call:* ${CALL_ON ? 'ON' : 'OFF'}
-┃  💾 *Database:* ${dbOn() ? 'MONGODB CONNECTED' : 'LOCAL FALLBACK'}
-┃
+┃  📞 *Auto Answer:* ${CALL_ON ? '🟢 ENABLED' : '🔴 DISABLED'}
+┃  🗄️ *Database:* ${dbOn() ? '🟢 MONGODB' : '🟡 LOCAL STORAGE'}
+┃  📦 *Baileys:* @dnuzi/baileys v0.1.3
+┃  🎧 *VOIP:* ${voipReady ? 'INITIALIZING' : 'STARTING'}
+┃  ━━━━━━━━━━━━━━━━━━━
+┃  ✨ *Ready for commands*
 ╰━━━━━━━━━━━━━━━━━━━━━━╯
 
-> ✦ Powered by ${config.botName}`,
+> ✦ Secure • Stable • One-to-one VoIP`,
                     });
                 }
             } catch (e) { console.log('Connect image message failed:', e.message); }
