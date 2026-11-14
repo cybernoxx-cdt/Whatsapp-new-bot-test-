@@ -618,10 +618,15 @@ function queueVoipDial(voip, number, file, kind) {
     const task = dialStartQueue.then(async () => {
         await waitForVoipSlot(voip);
         if (VOIP !== voip) throw new Error('VoIP connection changed before dialing.');
-        const options = { ...CALL_OPTS, autoEndCall: true, loop: false };
-        return kind === 'video'
-            ? voip.call(number, file, config.voip.callResolution || '480p', options)
-            : voip.call(number, file, undefined, options);
+
+        // Follow the exact single-media overloads documented by @dnuzi/baileys:
+        // audio: voip.call(number, localFile)
+        // video: voip.call(number, localFile, resolution)
+        // The 4th options argument is documented for playlists, not single files.
+        if (kind === 'video') {
+            return voip.call(number, file, config.voip.callResolution || '480p');
+        }
+        return voip.call(number, file);
     });
     dialStartQueue = task.then(() => undefined, () => undefined);
     return task;
@@ -745,6 +750,9 @@ async function setupVoip(sock) {
     voip.on('call_outbound_audio_finished', (c) => {
         waiters.get(c?.callId ?? c?.call?.callId)?.();
     });
+    voip.on('call_state', (state) => {
+        console.log('📶 VoIP call state:', JSON.stringify(state));
+    });
     voip.on('call_error', (e) => console.log('Call error:', e?.message ?? e));
 
     return voip;
@@ -789,6 +797,7 @@ async function dialOut(kind, number, url) {
     call.on('connected', () => console.log(`✅ ${kind} call connected:`, callId));
     call.on('ended', reason => console.log(`📴 ${kind} call ended:`, reason || ''));
     call.on('error', error => console.error(`❌ ${kind} call error:`, error?.message || error));
+    await armAutoHangup(call, prepared.file, `manual ${kind} ${callId}`);
     return call;
 }
 
