@@ -33,7 +33,7 @@ export default {
     videoUrl: 'https://github.com/ubala-siya/file-storage-repo-2/raw/refs/heads/main/uploads/1793198989389-anonymous-7fryx6_IUNFvliL.mp4',
 
     texts: {
-        fail: '⚠️ Call system එක busy. නැවත උත්සාහ කරන්න.',
+        fail: '⚠️ Call media playback failed. Media URL එක සහ FFmpeg/ffprobe logs පරීක්ෂා කරන්න.',
         ownerOnly: '🔒 මේ command එක owner ට විතරයි.',
         footer: '> ✦ 🥵 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 💋',
     },
