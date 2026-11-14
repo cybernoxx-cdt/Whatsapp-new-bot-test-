@@ -668,10 +668,7 @@ async function setupVoip(sock) {
     // spam HTTP 403 at every reconnect. Selected media is prepared on demand.
     console.log('🎞️ Media loader ready (on-demand; saved uploads preferred).');
 
-    // call_incoming covers:
-    // 1) a normal audio/video call
-    // 2) the bot being added to a group call
-    // 3) your own outgoing call (waits until the other side answers)
+    // call_incoming handles one-to-one audio/video calls and tracks outgoing calls.
     voip.on('call_incoming', async (call) => {
         const callId = call.callId;
         const from = call.peerJid;
