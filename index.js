@@ -713,7 +713,7 @@ async function runPlayback(voip, sock, callId, isVideo, replyJid, mediaUrl) {
             });
         }
         if (!played && sock && replyJid) {
-            try { await sock.sendMessage(replyJid, { text: `${texts.fail}\\n\\n${texts.footer}` }); } catch {}
+            try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n\n${texts.footer}` }); } catch {}
         }
         await sleep(1500);
         await voip.hangup(callId).catch(() => {});
