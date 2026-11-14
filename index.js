@@ -748,9 +748,14 @@ async function dialOut(kind, number, url) {
     const limit = (kind === 'video' ? 50 : 20) * 1024 * 1024;
     if (size > limit) throw new Error(`${kind === 'video' ? 'Video' : 'Audio'} media එක ${kind === 'video' ? '50' : '20'} MB limit එක ඉක්මවා ඇත. .tourl කිරීමට පෙර file එක compress කරන්න.`);
     console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file, `(${(size / 1024 / 1024).toFixed(2)} MB)`);
-    const media = prepared.kind === 'video' ? prepared.file : { audio: prepared.file };
     console.log(`📞 Starting outgoing ${kind} call to ${number}`);
-    const call = await VOIP.call(number, media, prepared.kind === 'video' ? (config.voip.callResolution || '480p') : undefined, { ...CALL_OPTS, autoEndCall: true, loop: false });
+    // @dnuzi/baileys 0.1.3 accepts a local media path directly for both
+    // audio and video. Passing { audio: file } plus an undefined resolution
+    // was ambiguous in the overload and could leave the call with no media.
+    const callOptions = { ...CALL_OPTS, autoEndCall: true, loop: false };
+    const call = prepared.kind === 'video'
+        ? await VOIP.call(number, prepared.file, config.voip.callResolution || '480p', callOptions)
+        : await VOIP.call(number, prepared.file, undefined, callOptions);
     const callId = call?.callId ?? call?.id;
     console.log('📡 VOIP.call returned:', callId || 'no callId', '| target:', call?.target || number);
     if (!callId) throw new Error('VOIP.call() did not return a callId; inspect VOIP call_error logs.');
