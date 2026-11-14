@@ -1,3 +1,5 @@
+import { checkStatusWA } from '@dnuzi/baileys';
+
 // .check — WhatsApp number status checker for @dnuzi/baileys v0.1.3
 // Never report "not banned" when the lookup itself failed.
 const cleanNumber = value => String(value || '').replace(/[^0-9]/g, '');
@@ -30,17 +32,28 @@ export default {
             let result;
             let firstError;
 
-            // Prefer the documented standalone helper exposed on the socket's package.
+            // v0.1.3 documents the standalone export as the primary API.
             try {
-                if (typeof sock?.checkStatusWA === 'function') {
-                    result = await sock.checkStatusWA('+' + number);
+                if (typeof checkStatusWA === 'function') {
+                    result = await checkStatusWA('+' + number);
+                } else {
+                    firstError = new Error('checkStatusWA export is unavailable in the installed @dnuzi/baileys package');
                 }
             } catch (error) {
                 firstError = error;
             }
 
+            // Fallback to the documented socket method only if standalone did not return a usable result.
+            if (isLookupError(result) && typeof sock?.checkStatusWA === 'function') {
+                try {
+                    result = await sock.checkStatusWA('+' + number);
+                } catch (error) {
+                    firstError = error;
+                }
+            }
+
             if (isLookupError(result)) {
-                const detail = result?.error || result?.message || firstError?.message;
+                const detail = result?.error || result?.message || firstError?.message || 'No usable response from Baileys number-check API';
                 const statusText = String(result?.status || '').toLowerCase();
                 const detailText = detail ? String(detail).slice(0, 220) : '';
                 return reply(
