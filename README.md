@@ -48,3 +48,8 @@ npm run security-check
 ```
 
 Never commit WhatsApp session credentials, API keys, database connection strings, or pairing codes.
+
+
+## Multi-call limit
+
+Configure `config.voip.maxConcurrentCalls` in `config.js` (supported range: 1–5; default: 2). The same value controls the VoIP engine capacity and the maximum number of recipients accepted by each `.vcall` / `.acall` command. Duplicate numbers are rejected, and per-recipient call failures are reported independently.
