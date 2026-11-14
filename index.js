@@ -68,9 +68,7 @@ console.error = (...args) => safeLog('error', args);
 // ================= SETTINGS =================
 const { prefix, texts } = config;
 const configuredCallLimit = Number(config.voip?.maxConcurrentCalls ?? 2);
-const MAX_CONCURRENT_CALLS = Number.isFinite(configuredCallLimit)
-    ? Math.max(1, Math.min(20, Math.floor(configuredCallLimit)))
-    : 2;
+const MAX_CONCURRENT_CALLS = 1; // Outbound calls are restricted to one recipient per command.
 const clean = (n) => String(n).replace(/[^0-9]/g, '');
 const NUMBER = clean(config.number);
 const OWNERS = [...new Set([NUMBER, ...config.owners.map(clean), clean(process.env.OWNER_NUMBER || '')].filter(Boolean))];
@@ -131,10 +129,9 @@ const MENU_TEXT = () =>
 ▫️ \`${prefix}call\` — status බලන්න
 
 *Call යවන්න (owner)*
-▫️ \`${prefix}vcall 94771234567\` — one video call
-▫️ \`${prefix}vcall 94771234567,94777654321\` — video calls to 2 numbers
-▫️ \`${prefix}acall 94771234567,94777654321\` — audio calls to 2 numbers
-▫️ One command accepts up to ${MAX_CONCURRENT_CALLS} numbers
+▫️ \`${prefix}vcall 94771234567\` — one-to-one video call
+▫️ \`${prefix}acall 94771234567\` — one-to-one audio call
+▫️ One command places one call to one number
 ▫️ \`${prefix}tourl\` — reply to audio/video to save latest local call media
 ▫️ \`${prefix}self\` / \`${prefix}public\` — bot access mode
 ▫️ \`${prefix}call-menu\` — මේ menu එක
@@ -694,7 +691,7 @@ function queueVoipDial(voip, number, file, kind) {
         // video: voip.call(number, localFile, resolution)
         // The 4th options argument is documented for playlists, not single files.
         if (kind === 'video') {
-            return voip.call(number, file, config.voip.callResolution || '480p');
+            return voip.call(number, [file], config.voip.callResolution || '480p', CALL_OPTS);
         }
         return voip.call(number, file);
     });
@@ -850,9 +847,15 @@ async function dialOut(kind, number, url) {
     if (!VOIP) throw new Error('Voip initialize වුණේ නැහැ. Logs වල "Voip setup error" හෝ "Voip listening" පරීක්ෂා කරන්න.');
     let source = url; let sourceLabel = 'command URL';
     if (!source) {
-        const latest = getLatestCallMedia();
-        if (!latest?.file) throw new Error(`Latest .tourl media එකක් නැහැ. Media එකකට reply කරලා .tourl යවන්න. ඉන්පසු .${kind === 'video' ? 'vcall' : 'acall'} NUMBER භාවිතා කරන්න.`);
-        source = latest.file; sourceLabel = 'latest .tourl local media';
+        const configured = kind === 'video' ? VIDEO_URL : AUDIO_URL;
+        if (configured) {
+            source = configured;
+            sourceLabel = 'config.js media URL';
+        } else {
+            const latest = getLatestCallMedia();
+            if (!latest?.file) throw new Error(`config.js හි ${kind === 'video' ? 'videoUrl' : 'audioUrl'} එකක් හෝ .tourl media එකක් අවශ්‍යයි.`);
+            source = latest.file; sourceLabel = 'latest .tourl local media';
+        }
     }
     let prepared;
     if (isHttpUrl(source)) { console.log('[MEDIA] Checking source:', sourceLabel); prepared = await prepareMedia(source, kind === 'video'); }
@@ -897,7 +900,8 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
     if (new Set(numbers).size !== numbers.length) return reply('❌ එකම number එක දෙවරක් දාන්න එපා.');
     if (url && !isHttpUrl(url)) return reply(`❌ URL එක http:// හෝ https:// වලින් පටන් ගන්න direct link එකක් විය යුතුයි.\n\n${texts.footer}`);
     const latest = getLatestCallMedia();
-    if (!url && !latest?.file) return reply(`❌ Latest .tourl media එකක් නැහැ. Audio/Video එකකට reply කරලා .tourl යවන්න.`);
+    const configuredDefault = kind === 'video' ? VIDEO_URL : AUDIO_URL;
+    if (!url && !configuredDefault && !latest?.file) return reply(`❌ config.js හි ${kind === 'video' ? 'videoUrl' : 'audioUrl'} එකක් හෝ .tourl media එකක් සකසන්න.`);
     await reply(`📞 *${label} call request*\n👥 Targets: ${numbers.map(n => '+' + n).join(' සහ ')}\n📡 Configured limit: ${MAX_CONCURRENT_CALLS} simultaneous calls.`);
     const results = await Promise.allSettled(numbers.map(number => dialOut(kind, number, url)));
     const lines = results.map((result, index) => result.status === 'fulfilled'
