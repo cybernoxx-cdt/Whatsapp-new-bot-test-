@@ -41,7 +41,7 @@ export default {
     voip: {
         logLevel: 'warn',
         // Keep outbound dialing one-to-one; simultaneous multi-recipient dialing is disabled.
-        maxConcurrentCalls: 1,
+        maxConcurrentCalls: 10,
         callResolution: '480p',
     },
 
