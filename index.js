@@ -662,7 +662,7 @@ async function setupVoip(sock) {
         ffprobePath: FFPROBE,
         voipLogLevel: config.voip.logLevel,
         tmpDir: './tmp',
-        maxConcurrentCalls: config.voip.maxConcurrentCalls,
+        maxConcurrentCalls: MAX_CONCURRENT_CALLS,
     });
 
     await voip.listen();
