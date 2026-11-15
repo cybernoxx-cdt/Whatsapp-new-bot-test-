@@ -40,7 +40,7 @@ export default {
 
     voip: {
         logLevel: 'warn',
-        // Keep outbound dialing one-to-one; simultaneous multi-recipient dialing is disabled.
+        // Max simultaneous calls (outgoing + incoming). Override with CALL_LIMIT env. Hard cap: 50.
         maxConcurrentCalls: 10,
         callResolution: '480p',
     },

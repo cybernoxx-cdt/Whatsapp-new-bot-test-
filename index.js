@@ -1,6 +1,6 @@
 // ============================================================
 //  GOD VOIP MD
-//  Pair code (logs) → session MongoDB එකේ save • Auto call + .vcall / .acall
+//  Pair code (logs) → session MongoDB එකේ save • Auto call + .vcall / .acall (multi-call, auto convert)
 // ============================================================
 
 import * as B from '@dnuzi/baileys';
@@ -17,6 +17,7 @@ import config from './config.js';
 import { loadSession, sessionHash } from './session.js';
 import { validateMediaFile } from './security.js';
 import { getLatestCallMedia } from './media-store.js';
+import { prepare as prepareConverted, setBinaries, cleanCache } from './media-convert.js';
 
 // ---- Safe, concise logging: never print Signal ratchet/session objects ----
 const _rawLog = console.log.bind(console);
@@ -67,8 +68,9 @@ console.error = (...args) => safeLog('error', args);
 
 // ================= SETTINGS =================
 const { prefix, texts } = config;
-const configuredCallLimit = Number(config.voip?.maxConcurrentCalls ?? 2);
-const MAX_CONCURRENT_CALLS = 1; // Outbound calls are restricted to one recipient per command.
+// Concurrent call limit: CALL_LIMIT env > config.voip.maxConcurrentCalls (default 10, hard cap 50)
+const configuredCallLimit = Number(process.env.CALL_LIMIT || config.voip?.maxConcurrentCalls || 10);
+const MAX_CONCURRENT_CALLS = Math.min(50, Math.max(1, Math.floor(configuredCallLimit) || 1));
 const clean = (n) => String(n).replace(/[^0-9]/g, '');
 const NUMBER = clean(config.number);
 const OWNERS = [...new Set([NUMBER, ...config.owners.map(clean), clean(process.env.OWNER_NUMBER || '')].filter(Boolean))];
@@ -115,6 +117,9 @@ for (const bin of [FFMPEG, FFPROBE]) {
     }
 }
 
+setBinaries({ ffmpeg: FFMPEG, ffprobe: FFPROBE });
+cleanCache();
+
 // ================= MESSAGE STYLES =================
 const statusIcon = () => (CALL_ON ? '🟢 *ON*' : '🔴 *OFF*');
 
@@ -131,7 +136,8 @@ const MENU_TEXT = () =>
 *Call යවන්න (owner)*
 ▫️ \`${prefix}vcall 94771234567\` — one-to-one video call
 ▫️ \`${prefix}acall 94771234567\` — one-to-one audio call
-▫️ One command places one call to one number
+▫️ Many numbers: \`${prefix}acall 9477xxxxxxx,9476xxxxxxx [link]\` (up to the call limit)
+▫️ Any audio/video link works — auto converted (audio→ogg, video→mp4)
 ▫️ \`${prefix}tourl\` — reply to audio/video to save latest local call media
 ▫️ \`${prefix}self\` / \`${prefix}public\` — bot access mode
 ▫️ \`${prefix}call-menu\` — මේ menu එක
@@ -351,52 +357,12 @@ function hasVideoStream(file) {
     });
 }
 
-// Convert any supported audio input into a predictable OGG/Opus file for call playback.
-async function makeCallAudio(src) {
-    const out = src.replace(/\.[^.]+$/, '') + '_call.ogg';
-    if (fs.existsSync(out) && fs.statSync(out).size > 0) return out;
-    await new Promise((resolve, reject) => {
-        const ff = spawn(FFMPEG, [
-            '-y', '-v', 'error', '-i', src,
-            '-map', '0:a:0', '-vn',
-            '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1',
-            '-application', 'voip', '-f', 'ogg', out,
-        ]);
-        let stderr = '';
-        ff.stderr.on('data', d => { stderr += String(d).slice(0, 1000); });
-        ff.on('error', reject);
-        ff.on('close', code => code === 0 ? resolve() : reject(new Error('Audio conversion failed: ' + (stderr.trim() || 'ffmpeg exit ' + code))));
-    });
-    return out;
-}
-
-// download (if URL) + for video: convert to a call-friendly local .mp4.
-// Returns { file, kind } where kind is 'video' or 'audio' (decided from the REAL file content, not the URL extension).
+// Download (if URL) + convert ANY audio/video to a call-friendly file.
+// audio -> .ogg (Opus) | video -> .mp4 (H.264 baseline). Type is detected from real content, not the URL extension.
 async function prepareMedia(url, wantVideo) {
-    fs.mkdirSync('./tmp', { recursive: true });
-    let file;
-    if (/^https?:\/\//i.test(url)) {
-        file = cacheName(url);
-        if (!fs.existsSync(file) || fs.statSync(file).size === 0) await downloadFile(url, file);
-    } else {
-        file = url;
-        if (!fs.existsSync(file)) throw new Error('local file not found: ' + file);
-    }
-    // Validate container and stream metadata before handing media to FFmpeg/VoIP.
-    const inspection = await validateMediaFile(file, { ffprobe: FFPROBE, maxBytes: 150 * 1024 * 1024, maxDurationSeconds: 900 });
-    if (!wantVideo) {
-        if (!inspection.hasAudio) throw new Error('Media file does not contain an audio stream.');
-        file = await makeCallAudio(file);
-        const converted = await validateMediaFile(file, { ffprobe: FFPROBE, maxBytes: 150 * 1024 * 1024, maxDurationSeconds: 900 });
-        if (!converted.hasAudio) throw new Error('FFmpeg conversion did not produce a valid audio stream.');
-        return { file: path.resolve(file), kind: 'audio' };
-    }
-
-    if (!inspection.hasVideo) throw new Error('මෙම media file එකේ video stream එකක් නැහැ. .vcall සඳහා video එකක් .tourl කරන්න.');
-    file = await makeCallVideo(file);
-    const converted = await validateMediaFile(file, { ffprobe: FFPROBE, maxBytes: 150 * 1024 * 1024, maxDurationSeconds: 900 });
-    if (!converted.hasVideo) throw new Error('FFmpeg conversion එකෙන් valid video stream එකක් ලැබුණේ නැහැ.');
-    return { file: path.resolve(file), kind: 'video' };
+    const r = await prepareConverted(url, { wantVideo, maxSeconds: 900 });
+    console.log(`🎛️ [MEDIA] converted → ${r.kind}: ${path.basename(r.file)} (${r.duration.toFixed(1)}s)`);
+    return { file: r.file, kind: r.kind, ogg: r.ogg, duration: r.duration };
 }
 
 // real duration of a media file in ms (0 if unknown)
@@ -556,6 +522,7 @@ async function playAudioOnCall(voip, callId, url) {
 
 // Convert the video to a small, call-friendly version (480px, baseline H.264, low bitrate)
 async function makeCallVideo(src) {
+    if (src.includes('media-cache')) return src; // already converted by media-convert.js
     const out = src.replace(/\.[^.]+$/, '') + '_call.mp4';
     if (fs.existsSync(out) && fs.statSync(out).size > 0) return out;
     await new Promise((resolve, reject) => {
@@ -894,38 +861,41 @@ async function setupVoip(sock) {
 // ================= MANUAL CALLS (.vcall / .acall) =================
 const isHttpUrl = (u) => /^https?:\/\/\S+$/i.test(u || '');
 
-async function dialOut(kind, number, url) {
+async function waitForVoip() {
     const readyDeadline = Date.now() + 30000;
     while (!VOIP && Date.now() < readyDeadline) {
         if (voipInitPromise) { try { await Promise.race([voipInitPromise, sleep(1000)]); } catch {} }
         else await sleep(500);
     }
     if (!VOIP) throw new Error('Voip initialize වුණේ නැහැ. Logs වල "Voip setup error" හෝ "Voip listening" පරීක්ෂා කරන්න.');
+    return VOIP;
+}
+
+// Pick the media source (command link > config link > latest .tourl) and convert it ONCE.
+// Audio always ends up as .ogg, video as .mp4 - whatever the original extension was.
+async function resolveDialMedia(kind, url) {
     let source = url; let sourceLabel = 'command URL';
     if (!source) {
         const configured = kind === 'video' ? VIDEO_URL : AUDIO_URL;
-        if (configured) {
-            source = configured;
-            sourceLabel = 'config.js media URL';
-        } else {
+        if (configured) { source = configured; sourceLabel = 'config.js media URL'; }
+        else {
             const latest = getLatestCallMedia();
             if (!latest?.file) throw new Error(`config.js හි ${kind === 'video' ? 'videoUrl' : 'audioUrl'} එකක් හෝ .tourl media එකක් අවශ්‍යයි.`);
             source = latest.file; sourceLabel = 'latest .tourl local media';
         }
     }
-    let prepared;
-    if (isHttpUrl(source)) { console.log('[MEDIA] Checking source:', sourceLabel); prepared = await prepareMedia(source, kind === 'video'); }
-    else if (fs.existsSync(source)) { console.log('[MEDIA] Checking local source:', sourceLabel); prepared = await prepareMedia(source, kind === 'video'); }
-    else throw new Error('Media source එක හමු වුණේ නැහැ. නැවත .tourl යවන්න.');
-    console.log('[MEDIA] Source selected:', sourceLabel);
+    if (!isHttpUrl(source) && !fs.existsSync(source)) throw new Error('Media source එක හමු වුණේ නැහැ. නැවත .tourl යවන්න.');
+    console.log('[MEDIA] Source:', sourceLabel);
+    const prepared = await prepareMedia(source, kind === 'video');
     const size = fs.statSync(prepared.file).size;
     const limit = (kind === 'video' ? 50 : 20) * 1024 * 1024;
-    if (size > limit) throw new Error(`${kind === 'video' ? 'Video' : 'Audio'} media එක ${kind === 'video' ? '50' : '20'} MB limit එක ඉක්මවා ඇත. .tourl කිරීමට පෙර file එක compress කරන්න.`);
-    console.log(`📦 ${kind} call media prepared:`, prepared.kind, prepared.file, `(${(size / 1024 / 1024).toFixed(2)} MB)`);
+    if (size > limit) throw new Error(`Converted ${kind} media is ${(size / 1048576).toFixed(1)} MB (limit ${limit / 1048576} MB). Use a shorter file.`);
+    return prepared;
+}
+
+async function dialPrepared(kind, number, prepared) {
+    await waitForVoip();
     console.log(`📞 Starting outgoing ${kind} call to ${number}`);
-    // @dnuzi/baileys 0.1.3 accepts a local media path directly for both
-    // audio and video. Passing { audio: file } plus an undefined resolution
-    // was ambiguous in the overload and could leave the call with no media.
     const voip = VOIP;
     const call = await queueVoipDial(voip, number, prepared.file, prepared.kind);
     const callId = call?.callId ?? call?.id;
@@ -940,33 +910,42 @@ async function dialOut(kind, number, url) {
     return call;
 }
 
+// kept for plugins / backwards compatibility
+async function dialOut(kind, number, url) {
+    await waitForVoip();
+    return dialPrepared(kind, number, await resolveDialMedia(kind, url));
+}
+
 async function handleDial(sock, m, kind, rawArgs, reply) {
     const label = kind === 'video' ? 'Video' : 'Audio';
     const cmd = kind === 'video' ? 'vcall' : 'acall';
-    // This command intentionally accepts exactly one recipient. Keep dialing
-    // serialized through queueVoipDial() so a second request cannot race a live call.
     const input = rawArgs.join(' ').trim();
-    const numberPart = input.split(/\s+(?=https?:\/\/)/i)[0];
-    const url = input.match(/\s+(https?:\/\/\S+)/i)?.[1];
-    const numbers = [...numberPart.matchAll(/\+?\d{8,15}/g)].map(match => clean(match[0]));
+    // numbers first, then an optional media link (any audio/video link, any extension)
+    const urlMatch = input.match(/https?:\/\/\S+/i);
+    const url = urlMatch?.[0];
+    const numberPart = (urlMatch ? input.slice(0, urlMatch.index) : input).trim();
+    const numbers = [...new Set([...numberPart.matchAll(/\+?\d[\d\s-]{6,17}\d/g)].map(x => clean(x[0])))];
     const residue = numberPart.replace(/[()+\s,;\d-]/g, '');
-    if (residue || numbers.length !== 1 || numbers[0].length < 8 || numbers[0].length > 15) {
-        await reply(`❌ එක් command එකකට එක් valid phone number එකක් පමණක් ලබාදෙන්න.\n\n*Example:*\n\`${prefix}${cmd} 94771234567\`\n\n${texts.footer}`);
+    if (residue || numbers.length < 1 || numbers.length > MAX_CONCURRENT_CALLS || numbers.some(n => n.length < 8 || n.length > 15)) {
+        await reply(`❌ Number format එක වැරදියි. 1 සිට ${MAX_CONCURRENT_CALLS} දක්වා numbers දෙන්න.\n\n*Examples:*\n\`${prefix}${cmd} 94771234567\`\n\`${prefix}${cmd} 94771234567,94777654321\`\n\`${prefix}${cmd} 94771234567 94777654321 https://site.com/any-audio-link\`\n\n${texts.footer}`);
         return;
     }
-    const number = numbers[0];
-    if (url && !isHttpUrl(url)) return reply(`❌ URL එක http:// හෝ https:// වලින් පටන් ගන්න direct link එකක් විය යුතුයි.\n\n${texts.footer}`);
     const latest = getLatestCallMedia();
     const configuredDefault = kind === 'video' ? VIDEO_URL : AUDIO_URL;
-    if (!url && !configuredDefault && !latest?.file) return reply(`❌ config.js හි ${kind === 'video' ? 'videoUrl' : 'audioUrl'} එකක් හෝ .tourl media එකක් සකසන්න.`);
-    await reply(`📞 *${label} one-to-one call*\n🎯 Target: +${number}\n⏳ Active call slot එක නිදහස් වූ පසු call එක ආරම්භ වේ.`);
-    try {
-        const call = await dialOut(kind, number, url);
-        const callId = call?.callId ?? call?.id ?? 'unknown';
-        await reply(`✅ *${label} call started*\n📱 Number: +${number}\n🆔 Call ID: ${callId}\n\nCall එක අවසන් වූ විට slot එක ස්වයංක්‍රීයව නිදහස් වේ.\n\n${texts.footer}`);
-    } catch (error) {
-        await reply(`❌ *${label} call failed*\n📱 Number: +${number}\n⚠️ ${error?.message || 'Call failed'}\n\n${texts.footer}`);
-    }
+    if (!url && !configuredDefault && !latest?.file) return reply(`❌ config.js හි ${kind === 'video' ? 'videoUrl' : 'audioUrl'} එකක් සකසන්න, link එකක් දෙන්න, හෝ .tourl media එකක් save කරන්න.`);
+
+    await reply(`📞 *${label} call request*\n👥 Targets: ${numbers.map(n => '+' + n).join(', ')}\n📡 Limit: ${MAX_CONCURRENT_CALLS} simultaneous calls\n🎛️ Media converting (${kind === 'video' ? 'mp4' : 'ogg'})...`);
+
+    let prepared;
+    try { prepared = await resolveDialMedia(kind, url); }
+    catch (e) { return reply(`❌ Media error: ${e.message}\n\n${texts.footer}`); }
+
+    // Same converted file is reused for every number (converted only once).
+    const results = await Promise.allSettled(numbers.map(number => dialPrepared(kind, number, prepared)));
+    const lines = results.map((r, i) => r.status === 'fulfilled'
+        ? `✅ +${numbers[i]} — ringing`
+        : `❌ +${numbers[i]} — ${r.reason?.message || 'Call failed'}`);
+    await reply(`╭━━〔 ✦ ${label.toUpperCase()} CALLS 〕━━╮\n${lines.join('\n')}\n╰━━━━━━━━━━━━━━━━━━╯\n${texts.footer}`);
 }
 
 // ================= PLUGINS =================

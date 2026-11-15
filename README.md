@@ -53,3 +53,8 @@ Never commit WhatsApp session credentials, API keys, database connection strings
 ## Multi-call limit
 
 Configure `config.voip.maxConcurrentCalls` in `config.js` (supported range: 1–5; default: 2). The same value controls the VoIP engine capacity and the maximum number of recipients accepted by each `.vcall` / `.acall` command. Duplicate numbers are rejected, and per-recipient call failures are reported independently.
+
+## Call updates
+- Call limit: `config.voip.maxConcurrentCalls` (default 10) or env `CALL_LIMIT` (max 50). Old "1–5" note above is superseded.
+- `.acall 9477xxxxxxx,9476xxxxxxx [link]` / `.vcall ...` dial many numbers at once; media is converted only once.
+- Any audio link/file (mp3, m4a, wav, no extension...) is auto-converted to `.ogg` (Opus); any video to `.mp4` (H.264). Type is detected from the real content, not the URL.
