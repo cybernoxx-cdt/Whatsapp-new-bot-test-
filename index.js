@@ -943,27 +943,30 @@ async function dialOut(kind, number, url) {
 async function handleDial(sock, m, kind, rawArgs, reply) {
     const label = kind === 'video' ? 'Video' : 'Audio';
     const cmd = kind === 'video' ? 'vcall' : 'acall';
-    // Accept up to the configured call limit; an optional media URL is shared by all targets.
+    // This command intentionally accepts exactly one recipient. Keep dialing
+    // serialized through queueVoipDial() so a second request cannot race a live call.
     const input = rawArgs.join(' ').trim();
     const numberPart = input.split(/\s+(?=https?:\/\/)/i)[0];
     const url = input.match(/\s+(https?:\/\/\S+)/i)?.[1];
     const numbers = [...numberPart.matchAll(/\+?\d{8,15}/g)].map(match => clean(match[0]));
     const residue = numberPart.replace(/[()+\s,;\d-]/g, '');
-    if (residue || numbers.length < 1 || numbers.length > MAX_CONCURRENT_CALLS || numbers.some(n => n.length < 8 || n.length > 15)) {
-        await reply(`❌ Number format එක වැරදියි. 1 සිට ${MAX_CONCURRENT_CALLS} දක්වා numbers දෙන්න.\n\n*Examples:*\n\`${prefix}${cmd} 94771234567\`\n\`${prefix}${cmd} 94771234567,94777654321\`\n\`${prefix}${cmd} (94771234567),(94777654321)\`\n\n${texts.footer}`);
+    if (residue || numbers.length !== 1 || numbers[0].length < 8 || numbers[0].length > 15) {
+        await reply(`❌ එක් command එකකට එක් valid phone number එකක් පමණක් ලබාදෙන්න.\n\n*Example:*\n\`${prefix}${cmd} 94771234567\`\n\n${texts.footer}`);
         return;
     }
-    if (new Set(numbers).size !== numbers.length) return reply('❌ එකම number එක දෙවරක් දාන්න එපා.');
+    const number = numbers[0];
     if (url && !isHttpUrl(url)) return reply(`❌ URL එක http:// හෝ https:// වලින් පටන් ගන්න direct link එකක් විය යුතුයි.\n\n${texts.footer}`);
     const latest = getLatestCallMedia();
     const configuredDefault = kind === 'video' ? VIDEO_URL : AUDIO_URL;
     if (!url && !configuredDefault && !latest?.file) return reply(`❌ config.js හි ${kind === 'video' ? 'videoUrl' : 'audioUrl'} එකක් හෝ .tourl media එකක් සකසන්න.`);
-    await reply(`📞 *${label} call request*\n👥 Targets: ${numbers.map(n => '+' + n).join(' සහ ')}\n📡 Configured limit: ${MAX_CONCURRENT_CALLS} simultaneous calls.`);
-    const results = await Promise.allSettled(numbers.map(number => dialOut(kind, number, url)));
-    const lines = results.map((result, index) => result.status === 'fulfilled'
-        ? `✅ +${numbers[index]} — ringing`
-        : `❌ +${numbers[index]} — ${result.reason?.message || 'Call failed'}`);
-    await reply(`╭━━〔 ✦ ${label.toUpperCase()} CALLS 〕━━╮\n${lines.join('\n')}\n╰━━━━━━━━━━━━━━━━━━╯\n${texts.footer}`);
+    await reply(`📞 *${label} one-to-one call*\n🎯 Target: +${number}\n⏳ Active call slot එක නිදහස් වූ පසු call එක ආරම්භ වේ.`);
+    try {
+        const call = await dialOut(kind, number, url);
+        const callId = call?.callId ?? call?.id ?? 'unknown';
+        await reply(`✅ *${label} call started*\n📱 Number: +${number}\n🆔 Call ID: ${callId}\n\nCall එක අවසන් වූ විට slot එක ස්වයංක්‍රීයව නිදහස් වේ.\n\n${texts.footer}`);
+    } catch (error) {
+        await reply(`❌ *${label} call failed*\n📱 Number: +${number}\n⚠️ ${error?.message || 'Call failed'}\n\n${texts.footer}`);
+    }
 }
 
 // ================= PLUGINS =================
