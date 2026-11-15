@@ -1025,6 +1025,21 @@ function senderNumbers(m) {
     ).filter(Boolean))];
 }
 
+// Recent message cache: WhatsApp strips url/mediaKey/directPath from QUOTED media,
+// so plugins (.vv / .link) need the ORIGINAL message the bot received earlier.
+const MSG_CACHE = new Map();
+const MSG_CACHE_MAX = 1500;
+function cacheMessage(m) {
+    const id = m?.key?.id;
+    if (!id || !m.message) return;
+    const inner = unwrapMessage(m.message);
+    if (!(inner.imageMessage || inner.videoMessage || inner.audioMessage || inner.documentMessage || inner.stickerMessage || m.message.viewOnceMessage || m.message.viewOnceMessageV2)) return;
+    MSG_CACHE.delete(id);
+    MSG_CACHE.set(id, m);
+    if (MSG_CACHE.size > MSG_CACHE_MAX) MSG_CACHE.delete(MSG_CACHE.keys().next().value);
+}
+const getCachedMessage = (id) => (id ? MSG_CACHE.get(id) || null : null);
+
 async function handleCommand(sock, m) {
     const body = extractCommandText(m.message);
     const trimmed = String(body || '').trim();
@@ -1077,7 +1092,7 @@ async function handleCommand(sock, m) {
 
     if (plugin) {
         const ctx = {
-            sock, m, jid, config, prefix, isOwner,
+            sock, m, jid, config, prefix, isOwner, getCachedMessage,
             args: rawArgs,
             text: rawArgs.join(' '),
             reply,
@@ -1145,6 +1160,7 @@ async function start() {
         version,
         logger,
         printQRInTerminal: false,
+        getMessage: async (key) => getCachedMessage(key?.id)?.message,
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
         auth: {
             creds: state.creds,
@@ -1183,6 +1199,7 @@ async function start() {
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const m of messages || []) {
             if (!m?.message || m.key?.remoteJid === 'status@broadcast') continue;
+            cacheMessage(m);
             try {
                 await handleCommand(sock, m);
             } catch (e) {
