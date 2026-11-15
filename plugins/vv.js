@@ -2,6 +2,24 @@ import { downloadContentFromMessage, downloadMediaMessage } from '@dnuzi/baileys
 import pino from 'pino';
 
 const logger = pino({ level: 'silent' });
+// Own message cache: WhatsApp removes url/mediaKey/directPath from QUOTED media,
+// so the ORIGINAL message (seen while the bot was online) is needed to download it.
+const LOCAL_CACHE = new Map();
+const hooked = new WeakSet();
+function hook(sock) {
+  if (!sock?.ev || hooked.has(sock)) return;
+  hooked.add(sock);
+  sock.ev.on('messages.upsert', ({ messages }) => {
+    for (const msg of messages || []) {
+      const id = msg?.key?.id;
+      if (!id || !msg.message) continue;
+      LOCAL_CACHE.delete(id);
+      LOCAL_CACHE.set(id, msg);
+      if (LOCAL_CACHE.size > 1500) LOCAL_CACHE.delete(LOCAL_CACHE.keys().next().value);
+    }
+  });
+}
+
 const MEDIA_TYPES = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'];
 
 function unwrap(message) {
@@ -53,15 +71,15 @@ async function streamBuffer(content, kind) {
   return buffer;
 }
 
-async function getQuotedBuffer(sock, ctx, jid) {
-  const quoted = ctx?.quotedMessage;
+async function getQuotedBuffer(sock, ctx, jid, quotedOverride) {
+  const quoted = quotedOverride || ctx?.quotedMessage;
   if (!quoted) throw new Error('Reply to an image/video/audio/document with .vv.');
   const found = findMedia(quoted);
   if (!found) throw new Error('Quoted message does not contain supported media.');
   const kind = found.type.replace('Message', '');
   try {
     if (!found.content?.url && !found.content?.directPath) {
-      throw new Error('WhatsApp media direct path is missing.');
+      throw new Error('This quoted copy has no download path (WhatsApp strips it from replies), and the original was not seen by the bot while it was online.');
     }
     return { ...found, buffer: await streamBuffer(found.content, kind) };
   } catch (firstError) {
@@ -92,16 +110,25 @@ export default {
   aliases: ['viewonce', 'vo'],
   desc: 'Re-send quoted media that the account is allowed to access',
   ownerOnly: true,
-  async run({ sock, jid, m, reply }) {
+  async run({ sock, jid, m, reply, getCachedMessage }) {
+    hook(sock);
     const context = getContext(m.message);
     if (!context?.quotedMessage) return reply('Media message එකකට reply කරලා .vv යවන්න.');
 
     // Do not attempt to bypass View Once protections.
-    const quoted = context.quotedMessage;
-    if (containsViewOnce(quoted)) return reply('🔒 View Once media සඳහා .vv download කිරීම support කරන්නේ නැහැ. Senderගෙන් normal media එකක් ලෙස නැවත share කරන්න කියන්න.');
+    // Prefer the ORIGINAL message the bot cached (quoted copies have no media path).
+    const cached = getCachedMessage?.(context.stanzaId) || LOCAL_CACHE.get(context.stanzaId);
+    const quoted = cached?.message || context.quotedMessage;
+    if (!cached) {
+      const q = findMedia(context.quotedMessage);
+      if (q && !q.content?.url && !q.content?.directPath) {
+        return reply('⚠️ මේ media එක bot එක online ඉන්න වෙලාවේ ආපු එකක් නෙවෙයි (restart එකට කලින්), ඒක නිසා download කරන්න බෑ.\n\n✅ Bot restart කරලා *අලුතින්* එන media එකකට reply කරලා .vv යවන්න. (index.js, plugins/vv.js දෙකම අලුත් version එක තියෙන්න ඕනේ)');
+      }
+    }
+    if (containsViewOnce(quoted) || containsViewOnce(context.quotedMessage)) return reply('🔒 View Once media සඳහා .vv download කිරීම support කරන්නේ නැහැ. Senderගෙන් normal media එකක් ලෙස නැවත share කරන්න කියන්න.');
 
     try {
-      const found = await getQuotedBuffer(sock, context, jid);
+      const found = await getQuotedBuffer(sock, context, jid, quoted);
       const content = found.content;
       const caption = content.caption || undefined;
       const kind = found.type === 'imageMessage' ? 'image'
