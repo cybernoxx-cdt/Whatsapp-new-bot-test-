@@ -351,6 +351,25 @@ function hasVideoStream(file) {
     });
 }
 
+// Convert any supported audio input into a predictable OGG/Opus file for call playback.
+async function makeCallAudio(src) {
+    const out = src.replace(/\.[^.]+$/, '') + '_call.ogg';
+    if (fs.existsSync(out) && fs.statSync(out).size > 0) return out;
+    await new Promise((resolve, reject) => {
+        const ff = spawn(FFMPEG, [
+            '-y', '-v', 'error', '-i', src,
+            '-map', '0:a:0', '-vn',
+            '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1',
+            '-application', 'voip', '-f', 'ogg', out,
+        ]);
+        let stderr = '';
+        ff.stderr.on('data', d => { stderr += String(d).slice(0, 1000); });
+        ff.on('error', reject);
+        ff.on('close', code => code === 0 ? resolve() : reject(new Error('Audio conversion failed: ' + (stderr.trim() || 'ffmpeg exit ' + code))));
+    });
+    return out;
+}
+
 // download (if URL) + for video: convert to a call-friendly local .mp4.
 // Returns { file, kind } where kind is 'video' or 'audio' (decided from the REAL file content, not the URL extension).
 async function prepareMedia(url, wantVideo) {
@@ -367,6 +386,9 @@ async function prepareMedia(url, wantVideo) {
     const inspection = await validateMediaFile(file, { ffprobe: FFPROBE, maxBytes: 150 * 1024 * 1024, maxDurationSeconds: 900 });
     if (!wantVideo) {
         if (!inspection.hasAudio) throw new Error('Media file does not contain an audio stream.');
+        file = await makeCallAudio(file);
+        const converted = await validateMediaFile(file, { ffprobe: FFPROBE, maxBytes: 150 * 1024 * 1024, maxDurationSeconds: 900 });
+        if (!converted.hasAudio) throw new Error('FFmpeg conversion did not produce a valid audio stream.');
         return { file: path.resolve(file), kind: 'audio' };
     }
 
