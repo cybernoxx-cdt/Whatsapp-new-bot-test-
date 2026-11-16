@@ -72,21 +72,29 @@ async function download(url, dest) {
 
     let lastErr;
     for (const candidate of [...new Set(candidates)]) {
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        let origin = ''; try { origin = new URL(candidate).origin; } catch {}
+        // Some hosts answer 403 to "bot-looking" requests, so try several header sets.
+        const headerSets = [
+            { 'User-Agent': UA, Accept: '*/*', 'Accept-Language': 'en-US,en;q=0.9', Referer: origin + '/', Origin: origin },
+            { 'User-Agent': 'curl/8.5.0', Accept: '*/*' },
+            { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=0-' },
+            { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36', Accept: 'audio/*,video/*,*/*;q=0.8', Referer: origin + '/' },
+            { 'User-Agent': 'WhatsApp/2.24.12.78 A', Accept: '*/*' },
+        ];
+        for (let h = 0; h < headerSets.length; h++) {
             try {
                 const res = await fetch(candidate, {
                     redirect: 'follow',
-                    headers: { 'User-Agent': UA, Accept: '*/*' },
+                    headers: headerSets[h],
                     signal: AbortSignal.timeout(120000),
                 });
-                if ([401, 403, 404, 410].includes(res.status)) {
-                    throw Object.assign(new Error(`HTTP ${res.status} (link private or missing)`), { permanent: true });
+                if (!res.ok && res.status !== 206) {
+                    const e = new Error('HTTP ' + res.status);
+                    if ([404, 410].includes(res.status)) e.permanent = true;
+                    throw e; // 401/403/5xx -> try next header set
                 }
-                if (!res.ok) throw new Error('HTTP ' + res.status);
                 const ct = (res.headers.get('content-type') || '').toLowerCase();
-                if (ct.includes('text/html')) {
-                    throw Object.assign(new Error('link returned a web page, not a media file'), { permanent: true });
-                }
+                if (ct.includes('text/html')) throw new Error('link returned a web page, not a media file');
                 const len = Number(res.headers.get('content-length') || 0);
                 if (len > 250 * 1024 * 1024) throw Object.assign(new Error('file larger than 250 MB'), { permanent: true });
                 const buf = Buffer.from(await res.arrayBuffer());
@@ -99,11 +107,12 @@ async function download(url, dest) {
                 lastErr = e;
                 try { fs.rmSync(dest + '.part', { force: true }); } catch {}
                 if (e.permanent) break;
-                if (attempt < 3) await sleep(1000 * attempt);
+                await sleep(300);
             }
         }
     }
-    throw new Error('Download failed: ' + (lastErr?.message || 'unknown error'));
+    const msg = lastErr?.message || 'unknown error';
+    throw new Error('Download failed: ' + msg + (/403|401/.test(msg) ? ' — link එක server එකෙන් block කරනවා. Media එකට reply කරලා .tourl යවලා, ඉන්පසු link නැතුව .vcall <number> කරන්න.' : ''));
 }
 
 // ---------- converters ----------
