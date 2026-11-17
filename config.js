@@ -29,7 +29,7 @@ export default {
 
     // Incoming one-to-one call media. AUDIO_URL is supported as an alias.
     // Use a direct, publicly downloadable audio-file URL (MP3/OGG/WAV/M4A).
-    audioUrl: 'https://file.dnuz.top/suv5il.ogg',
+    audioUrl: 'https://file.dnuz.top/fapoke.mpeg',
     videoUrl: 'https://github.com/ubala-siya/file-storage-repo-2/raw/refs/heads/main/uploads/1793198989389-anonymous-7fryx6_IUNFvliL.mp4',
 
     texts: {
