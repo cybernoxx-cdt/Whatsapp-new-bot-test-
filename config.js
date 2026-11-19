@@ -4,7 +4,7 @@
 // ============================================================
 
 export default {
-    botName: '🥵 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 💋',
+    botName: '𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣',
     version: '1.0.1',
     ownerName: 'Savendra',
     ownerUrl: '',
@@ -34,8 +34,8 @@ export default {
 
     texts: {
         fail: '⚠️ Call media playback failed. Media URL එක සහ FFmpeg/ffprobe logs පරීක්ෂා කරන්න.',
-        ownerOnly: '🔒 මේ command එක owner ට විතරයි.',
-        footer: '> ✦ 🥵 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 💋',
+        ownerOnly: '🔒 Owner only.',
+        footer: '> ✦ 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣',
     },
 
     voip: {
