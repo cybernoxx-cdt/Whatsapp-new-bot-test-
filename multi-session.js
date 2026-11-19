@@ -13,7 +13,12 @@ const sessions = [];
 const seenSessionFingerprints = new Map();
 
 for (let i = 1; i <= MAX_SESSIONS; i++) {
-    const raw = process.env[`SESSION_ID_${i}`] || (i === 1 ? process.env.SESSION_ID : '');
+    // SESSION_ID is always the primary account. SESSION_ID_1 is the first
+    // additional account, SESSION_ID_2 the next, and so on. Do not let
+    // SESSION_ID_1 silently shadow the primary SESSION_ID.
+    const raw = i === 1
+        ? (process.env.SESSION_ID || '')
+        : (process.env[`SESSION_ID_${i - 1}`] || '');
     if (!String(raw || '').trim()) continue;
     const normalized = String(raw).normalize('NFKC').trim();
     const fingerprint = crypto.createHash('sha256').update(normalized).digest('hex');
