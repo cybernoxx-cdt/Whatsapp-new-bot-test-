@@ -78,5 +78,25 @@ jobs:
           # Pairing codes are intentionally not printed to shared CI logs.
           GITHUB_ACTIONS: "true"
         run: |
-          echo "GOD VOIP MD starting"
-          node index.js
+          echo "GOD VOIP MD starting with workflow-level crash recovery"
+
+          # Restart the Node.js bot whenever it exits unexpectedly.
+          # GitHub Actions still enforces the job's 350-minute maximum runtime.
+          delay=5
+          max_delay=60
+
+          while true; do
+            echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Starting GOD VOIP MD..."
+            set +e
+            node index.js
+            exit_code=$?
+            set -e
+
+            echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Bot process exited (code: ${exit_code}). Restarting in ${delay}s..."
+            sleep "$delay"
+
+            delay=$((delay * 2))
+            if [ "$delay" -gt "$max_delay" ]; then
+              delay="$max_delay"
+            fi
+          done
