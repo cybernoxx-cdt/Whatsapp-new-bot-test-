@@ -28,8 +28,10 @@ const _logSeen = new Map();
 function safeLog(level, args) {
     const first = args.find(v => typeof v === 'string') || '';
     const joined = args.map(v => typeof v === 'string' ? v : '').join(' ');
-    const ratchetDump = /Closing session:\s*SessionEntry|Closing open session in favor of incoming prekey bundle/i.test(joined)
-        || ( /Closing session:/i.test(first) && args.some(v => v && typeof v === 'object') );
+    // Baileys may print full Signal SessionEntry objects while pruning old sessions.
+    // These objects contain ratchet keys and must never reach Actions logs.
+    const ratchetDump = /(?:Closing|Removing) old closed session:\s*SessionEntry|Closing session:\s*SessionEntry|Closing open session in favor of incoming prekey bundle/i.test(joined)
+        || (/(?:Closing session|Removing old closed session):/i.test(first) && args.some(v => v && typeof v === 'object'));
     if (ratchetDump) {
         const key = 'signal-ratchet';
         const now = Date.now();
