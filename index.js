@@ -129,43 +129,43 @@ cleanCache();
 const statusIcon = () => (CALL_ON ? '🟢 *ON*' : '🔴 *OFF*');
 
 const MENU_TEXT = () =>
-`📞 *${config.botName}*
+\`📞 *\${config.botName}*
 
-*Auto Call:* ${statusIcon()}
+*Auto Call:* \${statusIcon()}
 
 *Auto answer*
-▫️ `${prefix}call on` — auto call ON
-▫️ `${prefix}call off` — auto call OFF
-▫️ `${prefix}call` — status බලන්න
+▫️ \${prefix}call on — auto call ON
+▫️ \${prefix}call off — auto call OFF
+▫️ \${prefix}call — status බලන්න
 
 *Call යවන්න (owner)*
-▫️ `${prefix}vcall 94771234567` — one-to-one video call
-▫️ `${prefix}acall 94771234567` — one-to-one audio call
-▫️ Many numbers: `${prefix}acall 9477xxxxxxx,9476xxxxxxx [link]` (up to the call limit)
+▫️ \${prefix}vcall 94771234567 — one-to-one video call
+▫️ \${prefix}acall 94771234567 — one-to-one audio call
+▫️ Many numbers: \${prefix}acall 9477xxxxxxx,9476xxxxxxx [link]
 ▫️ Any audio/video link works — auto converted (audio→ogg, video→mp4)
-▫️ `${prefix}tourl` — reply to audio/video to save latest local call media
-▫️ `${prefix}self` / `${prefix}public` — bot access mode
-▫️ `${prefix}call-menu` — මේ menu එක
-▫️ `${prefix}c-ping` — speed
+▫️ \${prefix}tourl — reply to audio/video to save latest local call media
+▫️ \${prefix}mode self|inbox|group|both — bot access mode
+▫️ \${prefix}call-menu — මේ menu එක
+▫️ \${prefix}c-ping — speed
 
 *Auto answer වැඩ කරන විදිහ*
 Audio call → voice file
 Video call → video file
 
-👤 *Owner:* ${config.ownerName}
+👤 *Owner:* \${config.ownerName}
 
-${texts.footer}`;
+\${texts.footer}\`;
 
 const STATUS_TEXT = () =>
-`📞 *Auto Call:* ${statusIcon()}
+\`📞 *Auto Call:* \${statusIcon()}
 
-${CALL_ON
+\${CALL_ON
     ? 'එන one-to-one calls සඳහා පමණක් configured media auto play වෙනවා.'
     : 'ඔයා ON කරනකම් bot එක calls ignore කරනවා.'}
 
-සියලු commands සඳහා `${prefix}call-menu` use කරන්න.
+සියලු commands සඳහා \${prefix}call-menu use කරන්න.
 
-${texts.footer}`;
+\${texts.footer}\`;
 
 // ================= SETTINGS (ON/OFF) =================
 // MongoDB තියෙනවා නම් එහි save වෙනවා, නැත්නම් ./data/settings.json
@@ -932,7 +932,14 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
     const numbers = [...new Set([...numberPart.matchAll(/\+?\d[\d\s-]{6,17}\d/g)].map(x => clean(x[0])))];
     const residue = numberPart.replace(/[()+\s,;\d-]/g, '');
     if (residue || numbers.length < 1 || numbers.length > MAX_CONCURRENT_CALLS || numbers.some(n => n.length < 8 || n.length > 15)) {
-        await reply(`❌ Number format එක වැරදියි. 1 සිට ${MAX_CONCURRENT_CALLS} දක්වා numbers දෙන්න.\n\n*Examples:*\n`${prefix}${cmd} 94771234567`\n`${prefix}${cmd} 94771234567,94777654321`\n`${prefix}${cmd} 94771234567 94777654321 https://site.com/any-audio-link`\n\n${texts.footer}`);
+        await reply(\`❌ Number format එක වැරදියි. 1 සිට \${MAX_CONCURRENT_CALLS} දක්වා numbers දෙන්න.
+
+*Examples:*
+\${prefix}\${cmd} 94771234567
+\${prefix}\${cmd} 94771234567,94777654321
+\${prefix}\${cmd} 94771234567 94777654321 https://site.com/any-audio-link
+
+\${texts.footer}\`);
         return;
     }
     const latest = getLatestCallMedia();
