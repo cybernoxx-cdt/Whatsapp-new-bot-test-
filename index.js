@@ -30,8 +30,8 @@ function safeLog(level, args) {
     const joined = args.map(v => typeof v === 'string' ? v : '').join(' ');
     // Baileys may print full Signal SessionEntry objects while pruning old sessions.
     // These objects contain ratchet keys and must never reach Actions logs.
-    const ratchetDump = /(?:Closing|Removing) old closed session:\s*SessionEntry|Closing session:\s*SessionEntry|Closing open session in favor of incoming prekey bundle/i.test(joined)
-        || (/(?:Closing session|Removing old closed session):/i.test(first) && args.some(v => v && typeof v === 'object'));
+    const ratchetDump = /(?:Closing|Removing)(?: old closed)? session:\s*SessionEntry|Closing open session in favor of incoming prekey bundle/i.test(joined)
+        || (/(?:Closing|Removing)(?: old closed)? session:/i.test(first) && args.some(v => v && typeof v === 'object'));
     if (ratchetDump) {
         const key = 'signal-ratchet';
         const now = Date.now();
@@ -65,6 +65,8 @@ function safeLog(level, args) {
     (level === 'error' ? _rawError : level === 'warn' ? _rawWarn : _rawLog)(...safeArgs);
 }
 console.log = (...args) => safeLog('log', args);
+console.info = (...args) => safeLog('log', args);
+console.debug = (...args) => safeLog('log', args);
 console.warn = (...args) => safeLog('warn', args);
 console.error = (...args) => safeLog('error', args);
 
@@ -80,7 +82,8 @@ const MONGODB_URI = config.mongodbUri;
 const SESSION_KEY = config.sessionKey;
 const AUDIO_URL = String(config.audioUrl || '').trim();
 const VIDEO_URL = String(config.videoUrl || '').trim();
-console.log('🧩 BUILD v5 | local-tourl-media | direct-call | video-validate | vv-reupload | self-public');
+const SESSION_LABEL = process.env.SESSION_INDEX ? `[Session ${process.env.SESSION_INDEX}]` : '[Session 1]';
+console.log(`${SESSION_LABEL} 🧩 GOD VOIP MD starting`);
 
 // ================= BAILEYS EXPORTS =================
 const pick = (name) => B[name] ?? B.default?.[name] ?? B.default?.default?.[name];
@@ -313,7 +316,7 @@ async function downloadFile(url, file) {
 
 async function getPcm(url) {
     if (pcmCache.has(url)) return pcmCache.get(url);
-    fs.mkdirSync('./tmp', { recursive: true });
+    fs.mkdirSync(process.env.TMP_DIR || './tmp', { recursive: true });
 
     let file;
     if (/^https?:\/\//i.test(url)) {
@@ -785,17 +788,17 @@ async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
 const ANSWERED_RE = /connected|active|answered|in_call|incall|established|accepted/i;
 
 async function setupVoip(sock) {
-    fs.mkdirSync('./tmp', { recursive: true });
+    fs.mkdirSync(process.env.TMP_DIR || './tmp', { recursive: true });
     const voip = new Voip(sock, {
         ffprobePath: FFPROBE,
         voipLogLevel: config.voip.logLevel,
-        tmpDir: './tmp',
+        tmpDir: process.env.TMP_DIR || './tmp',
         maxConcurrentCalls: MAX_CONCURRENT_CALLS,
     });
 
     await voip.listen();
     VOIP = voip;
-    console.log('📡 Voip listening');
+    console.log(`${SESSION_LABEL} 📡 VoIP listening`);
 
     // Do not eagerly fetch config URLs: a stale/protected URL should not
     // spam HTTP 403 at every reconnect. Selected media is prepared on demand.
@@ -1157,7 +1160,13 @@ async function start() {
     starting = true;
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
-    const logger = pino({ level: 'silent' });
+    // Never allow Baileys/libsignal to dump Signal SessionEntry ratchet objects.
+    // A no-op logger is stricter than relying on the package's pino level handling.
+    const logger = {
+        level: 'silent',
+        trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {},
+        child() { return this; },
+    };
 
     const sock = makeWASocket({
         version,
@@ -1218,7 +1227,7 @@ async function start() {
             if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
             pairRequested = false;
             pairAttempts = 0;
-            console.log('✅ Connected: ' + sock.user?.id);
+            console.log(`${SESSION_LABEL} ✅ Connected: ${sock.user?.id || 'WhatsApp account'}`);
             await saveSession();
             // Send a branded connection card to the configured owner after each successful connection.
             try {
@@ -1338,14 +1347,20 @@ if (config.sessionId && (!saved || saved.src !== wantedSrc)) {
         CURRENT_SRC = wantedSrc;
         haveSession = true;
     } catch (e) {
-        console.log('⚠️ config sessionId පාවිච්චි කරන්න බැරි වුණා:', e.message);
+        console.log(`${SESSION_LABEL} ❌ Configured session is invalid:`, e.message);
+        // Do not silently fall back to a different MongoDB account/session.
+        // The supervisor will restart this worker and keep the failure visible.
+        process.exit(1);
     }
 }
 if (!haveSession && saved) {
     haveSession = await restoreSession(saved);
     if (haveSession) CURRENT_SRC = saved.src || '';
 }
-if (!haveSession) console.log('ℹ️ Session නෑ → pair code එකක් හදනවා...');
+if (!haveSession) {
+    console.log(`${SESSION_LABEL} ❌ No usable auth session found. Refusing to start an unlinked socket.`);
+    process.exit(1);
+}
 
 await loadSettings();
 await loadPlugins();
