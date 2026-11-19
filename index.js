@@ -1207,6 +1207,7 @@ let pairRequested = false;
 let pairAttempts = 0;
 let reconnectTimer = null;
 let starting = false;
+let socketGeneration = 0;
 const MAX_PAIR_CODES = 6;
 
 async function start() {
@@ -1222,6 +1223,7 @@ async function start() {
         child() { return this; },
     };
 
+    const generation = ++socketGeneration;
     const sock = makeWASocket({
         version,
         logger,
@@ -1277,6 +1279,8 @@ async function start() {
     let voipReady = false;
     let connectNoticeSent = false;
     sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
+        // Ignore late events from a socket replaced during reconnect.
+        if (ACTIVE_SOCKET !== sock || generation !== socketGeneration) return;
         if (connection === 'open') {
             starting = false;
             if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
