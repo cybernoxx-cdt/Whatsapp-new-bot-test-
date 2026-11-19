@@ -58,3 +58,10 @@ Configure `config.voip.maxConcurrentCalls` in `config.js` (supported range: 1–
 - Call limit: `config.voip.maxConcurrentCalls` (default 10) or env `CALL_LIMIT` (max 50). Old "1–5" note above is superseded.
 - `.acall 9477xxxxxxx,9476xxxxxxx [link]` / `.vcall ...` dial many numbers at once; media is converted only once.
 - Any audio link/file (mp3, m4a, wav, no extension...) is auto-converted to `.ogg` (Opus); any video to `.mp4` (H.264). Type is detected from the real content, not the URL.
+
+## Multi-session setup (GitHub Actions)
+
+The workflow supports up to 10 isolated WhatsApp accounts. Add each complete Baileys session export as an Actions secret named `SESSION_ID_1`, `SESSION_ID_2`, ... `SESSION_ID_10`. The legacy `SESSION_ID` secret is still supported as the first account when `SESSION_ID_1` is not set. Each account runs in its own Node.js process, auth directory, and MongoDB session key. Optional `BOT_NUMBER_2` ... `BOT_NUMBER_10` secrets set the pairing number for each account; otherwise the primary bot number is used. Existing sessions must be linked/registered already because pairing codes are not printed in Actions logs.
+
+The workflow logs the configured session count and each session's connection status. A missing session secret is skipped; a malformed session reports an error for that account.
+
