@@ -31,5 +31,16 @@ ${config.texts.footer}`;
         } else {
             await reply(caption);
         }
+
+        // Send the menu audio as a WhatsApp voice note (PTT).
+        try {
+            await sock.sendMessage(jid, {
+                audio: { url: 'https://file.dnuz.top/gqjtv9.ogg' },
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true,
+            }, { quoted: m });
+        } catch (error) {
+            console.log('[MENU VOICE NOTE] Send failed:', error?.message || error);
+        }
     },
 };
