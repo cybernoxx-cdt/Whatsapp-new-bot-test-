@@ -1252,6 +1252,7 @@ async function start() {
     });
 
     let voipReady = false;
+    let connectNoticeSent = false;
     sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
         if (connection === 'open') {
             starting = false;
@@ -1260,22 +1261,30 @@ async function start() {
             pairAttempts = 0;
             console.log(`${SESSION_LABEL} ✅ Connected: ${sock.user?.id || 'WhatsApp account'}`);
             await saveSession();
-            // Notify this WhatsApp session's own inbox after connection.
-            try {
+            // Send one compact connection card to this WhatsApp session's own inbox.
+            if (!connectNoticeSent) {
+                connectNoticeSent = true;
                 const sessionInbox = sock.user?.id
                     ? sock.user.id.split(':')[0].replace(/\D/g, '') + '@s.whatsapp.net'
                     : '';
                 if (sessionInbox) {
-                    await sock.sendMessage(sessionInbox, {
-                        image: { url: 'https://file.dnuz.top/w2cqgb.jpeg' },
-                        caption: `╭─「 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 」─╮
-│ ✅ Connected successfully
-│ 🟢 Status: Online
-│ 🔐 Mode: ${BOT_MODE.toUpperCase()}
-╰──────────────────╯`,
-                    });
+                    const connectCaption = `╭─「 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 」─╮
+│ ✅ Connected
+│ 🟢 Status : Online
+│ ⚙️ Mode : ${BOT_MODE.toUpperCase()}
+╰────────────────────╯
+
+> Powered by GOD VOIP MD`;
+                    try {
+                        await sock.sendMessage(sessionInbox, {
+                            image: { url: 'https://file.dnuz.top/w2cqgb.jpeg' },
+                            caption: connectCaption,
+                        });
+                    } catch (e) {
+                        console.log('Connect inbox message failed:', e.message);
+                    }
                 }
-            } catch (e) { console.log('Connect inbox message failed:', e.message); }
+            }
             if (!voipReady) {
                 voipReady = true;
                 voipInitPromise = setupVoip(sock).catch((e) => {
