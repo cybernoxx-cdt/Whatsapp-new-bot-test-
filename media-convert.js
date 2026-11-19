@@ -11,7 +11,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
-const TMP = path.resolve('./tmp');
+const TMP = path.resolve(process.env.TMP_DIR || './tmp');
 const CACHE = path.join(TMP, 'media-cache');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
