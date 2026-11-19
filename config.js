@@ -20,7 +20,7 @@ export default {
     // SESSION_ID must be a complete supported export (Base64 JSON,
     // creds.json JSON, full auth-state JSON map, or supported MEGA link).
     // A short pairing-code fragment such as "shavi&" is NOT a session.
-    sessionId: process.env.SESSION_ID || '',
+    sessionId: process.env.SESSION_ID || process.env.SESSION_ID_1 || '',
 
     owners: process.env.OWNER_NUMBER ? [process.env.OWNER_NUMBER] : ['94707085822'],
     port: process.env.PORT || 8000,
