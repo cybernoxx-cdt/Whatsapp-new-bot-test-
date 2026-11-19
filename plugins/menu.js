@@ -1,3 +1,5 @@
+import { prepare as prepareConverted } from '../media-convert.js';
+
 // .menu — lists every loaded plugin automatically
 
 export default {
@@ -32,15 +34,22 @@ ${config.texts.footer}`;
             await reply(caption);
         }
 
-        // Send the menu audio as a WhatsApp voice note (PTT).
+        // Convert the source into real OGG/Opus before sending as a WhatsApp PTT.
+        // The URL extension is not trusted; FFmpeg probes and converts the actual media.
         try {
+            const voice = await prepareConverted('https://file.dnuz.top/gqjtv9.ogg', {
+                wantVideo: false,
+                maxSeconds: 900,
+            });
+
             await sock.sendMessage(jid, {
-                audio: { url: 'https://file.dnuz.top/gqjtv9.ogg' },
+                audio: { url: voice.file },
                 mimetype: 'audio/ogg; codecs=opus',
                 ptt: true,
+                seconds: Math.max(1, Math.round(voice.duration || 0)),
             }, { quoted: m });
         } catch (error) {
-            console.log('[MENU VOICE NOTE] Send failed:', error?.message || error);
+            console.log('[MENU VOICE NOTE] Opus conversion/send failed:', error?.message || error);
         }
     },
 };
