@@ -1090,18 +1090,17 @@ async function handleCommand(sock, m) {
         sock.user?.phoneNumber,
         sock.user?.lid,
         sock.user?.lidJid,
-        m.key?.remoteJidAlt,
-        m.key?.participantAlt,
     ].filter(Boolean).map(value => String(value).toLowerCase());
-    const normalizeJid = value => String(value || '').toLowerCase().split(':')[0];
+    const normalizeJid = value => String(value || '').toLowerCase().replace(/:\\d+(?=@)/, '');
     const ownJids = new Set(ownIdentityValues.map(normalizeJid));
     const ownNumbers = new Set(ownIdentityValues.map(value =>
         clean(value.split('@')[0].split(':')[0])
     ).filter(Boolean));
     const chatJid = normalizeJid(jid);
+    const alternateChatJid = normalizeJid(m.key?.remoteJidAlt);
     const isBotSelfChat = ownJids.has(chatJid)
-        || (!!chatJid && ownNumbers.has(clean(chatJid.split('@')[0])))
-        || senders.some(number => ownNumbers.has(number));
+        || ownJids.has(alternateChatJid)
+        || (!!chatJid && ownNumbers.has(clean(chatJid.split('@')[0])));
 
     const isOwner = !!m.key.fromMe || isBotSelfChat
         || senders.some(number => OWNERS.includes(number));
