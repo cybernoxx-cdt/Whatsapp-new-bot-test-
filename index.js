@@ -178,7 +178,7 @@ const dbOn = () => mongoose.connection.readyState === 1;
 let CALL_ON = config.autoCallDefault;
 let BOT_MODE = 'self';
 let ACTIVE_SOCKET = null;
-const DEFAULT_CONNECT_IMAGE = 'https://file.dnuz.top/ulyg5b.png';
+const DEFAULT_CONNECT_IMAGE = 'https://file.dnuz.top/w2cqgb.jpeg';
 const DEFAULT_MENU_IMAGE = 'https://file.dnuz.top/4bo96s.jpg';
 let CONNECT_IMAGE_URL = DEFAULT_CONNECT_IMAGE;
 let MENU_IMAGE_URL = DEFAULT_MENU_IMAGE;
@@ -189,7 +189,7 @@ async function loadSettings() {
             const st = await Setting.findOne({ key: 'autoCall' });
             if (st) CALL_ON = !!st.value;
             const mode = await Setting.findOne({ key: 'botMode' });
-            if (mode?.value === 'public' || mode?.value === 'self') BOT_MODE = mode.value;
+            if (['self', 'inbox', 'group', 'both'].includes(mode?.value)) BOT_MODE = mode.value;
             const connectImage = await Setting.findOne({ key: 'connectImageUrl' });
             const menuImage = await Setting.findOne({ key: 'menuImageUrl' });
             CONNECT_IMAGE_URL = connectImage?.value || DEFAULT_CONNECT_IMAGE;
@@ -197,7 +197,7 @@ async function loadSettings() {
         } else if (fs.existsSync(SETTINGS_FILE)) {
             const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
             if (typeof j.autoCall === 'boolean') CALL_ON = j.autoCall;
-            if (j.botMode === 'public' || j.botMode === 'self') BOT_MODE = j.botMode;
+            if (['self', 'inbox', 'group', 'both'].includes(j.botMode)) BOT_MODE = j.botMode;
             CONNECT_IMAGE_URL = j.connectImageUrl || DEFAULT_CONNECT_IMAGE;
             MENU_IMAGE_URL = j.menuImageUrl || DEFAULT_MENU_IMAGE;
         }
@@ -234,7 +234,7 @@ async function saveImageSettings() {
 }
 
 async function setBotMode(mode) {
-    BOT_MODE = mode === 'public' ? 'public' : 'self';
+    BOT_MODE = ['self', 'inbox', 'group', 'both'].includes(mode) ? mode : 'self';
     try {
         if (dbOn()) await Setting.findOneAndUpdate({ key: 'botMode' }, { value: BOT_MODE }, { upsert: true });
         else {
@@ -243,7 +243,7 @@ async function setBotMode(mode) {
             fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...current, botMode: BOT_MODE }, null, 2));
         }
     } catch (e) { console.log('Bot mode save error:', e.message); }
-    if (ACTIVE_SOCKET) ACTIVE_SOCKET.public = BOT_MODE === 'public';
+    if (ACTIVE_SOCKET) ACTIVE_SOCKET.public = BOT_MODE !== 'self';
     console.log('🔐 Bot mode:', BOT_MODE);
 }
 
@@ -1064,29 +1064,44 @@ async function handleCommand(sock, m) {
     const isPing = name === 'c-ping' && arg === undefined;
     const isVcall = name === 'vcall';
     const isAcall = name === 'acall';
+    const isMode = name === 'mode';
     const isSelf = name === 'self';
     const isPublic = name === 'public';
     const plugin = PLUGIN_MAP.get(name);
-    if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall && !isSelf && !isPublic) return;
+    if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall && !isSelf && !isPublic && !isMode) return;
 
     // Group messages identify the sender via participant; newer Baileys builds
     // may expose the phone-number JID as participantAlt when the primary is an LID.
     const senders = senderNumbers(m);
     const isOwner = !!m.key.fromMe || senders.some(number => OWNERS.includes(number));
 
-    const publicAllowed = BOT_MODE === 'public' && ((plugin && !plugin.ownerOnly) || isMenu || isPing || (isCall && arg !== 'on' && arg !== 'off'));
+    const isGroupChat = jid.endsWith('@g.us');
+    const inAllowedChat = BOT_MODE === 'both'
+        || (BOT_MODE === 'inbox' && !isGroupChat)
+        || (BOT_MODE === 'group' && isGroupChat)
+        || BOT_MODE === 'self';
+
+    // Self mode: silently ignore non-owner commands.
+    if (!inAllowedChat || (BOT_MODE === 'self' && !isOwner)) return;
+
+    const publicAllowed = BOT_MODE !== 'self'
+        && ((plugin && !plugin.ownerOnly) || isMenu || isPing || (isCall && arg !== 'on' && arg !== 'off'));
     const allowed = isOwner || publicAllowed;
-    if (!allowed) {
-        await sock.sendMessage(jid, { text: `${texts.ownerOnly}\n\n${texts.footer}` }, { quoted: m });
-        return;
-    }
+    if (!allowed) return;
 
     const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
 
-    if (isSelf || isPublic) {
-        if (!isOwner) return reply(`${texts.ownerOnly}\n\n${texts.footer}`);
-        await setBotMode(isSelf ? 'self' : 'public');
-        return reply(`✅ Bot mode: *${BOT_MODE.toUpperCase()}*\n${BOT_MODE === 'self' ? 'Owner commands only.' : 'Public commands enabled (owner-only commands remain protected).'}\n\n${texts.footer}`);
+    if (isMode || isSelf || isPublic) {
+        if (!isOwner) return;
+        const requested = isMode ? rawArgs.join('').toLowerCase().replace(/\s+/g, '') : (isSelf ? 'self' : 'both');
+        const aliases = { 'inbox&group': 'both', 'inbox+group': 'both', 'inboxandgroup': 'both', 'public': 'both' };
+        const nextMode = aliases[requested] || requested;
+        if (!['self', 'inbox', 'group', 'both'].includes(nextMode)) {
+            return reply(\`⚙️ *Bot Mode*\n\n• \${prefix}mode self\n• \${prefix}mode inbox\n• \${prefix}mode group\n• \${prefix}mode both\`);
+        }
+        await setBotMode(nextMode);
+        const labels = { self: 'OWNER ONLY', inbox: 'INBOX ONLY', group: 'GROUP ONLY', both: 'INBOX & GROUP' };
+        return reply(\`✅ *Mode updated:* \${labels[BOT_MODE]}\n✦ 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣\`);
     }
 
     if (isVcall || isAcall) {
@@ -1229,31 +1244,22 @@ async function start() {
             pairAttempts = 0;
             console.log(`${SESSION_LABEL} ✅ Connected: ${sock.user?.id || 'WhatsApp account'}`);
             await saveSession();
-            // Send a branded connection card to the configured owner after each successful connection.
+            // Notify this WhatsApp session's own inbox after connection.
             try {
-                const ownerNumber = String(config.owners?.[0] || config.number || '').replace(/[^0-9]/g, '');
-                if (ownerNumber) {
-                    await sock.sendMessage(ownerNumber + '@s.whatsapp.net', {
-                        image: { url: CONNECT_IMAGE_URL },
-                        caption: `╭━━━〔 ✦ 𝑮𝑶𝑫 𝑽𝑶𝑰𝑷 𝑴𝑫 ✦ 〕━━━╮
-┃
-┃  ✅ *SYSTEM CONNECTED*
-┃  ━━━━━━━━━━━━━━━━━━━
-┃  🤖 *Bot:* ${config.botName}
-┃  📡 *Status:* 🟢 ONLINE
-┃  🔐 *Mode:* ${BOT_MODE.toUpperCase()}
-┃  📞 *Auto Answer:* ${CALL_ON ? '🟢 ENABLED' : '🔴 DISABLED'}
-┃  🗄️ *Database:* ${dbOn() ? '🟢 MONGODB' : '🟡 LOCAL STORAGE'}
-┃  📦 *Baileys:* @dnuzi/baileys v0.1.3
-┃  🎧 *VOIP:* ${voipReady ? 'INITIALIZING' : 'STARTING'}
-┃  ━━━━━━━━━━━━━━━━━━━
-┃  ✨ *Ready for commands*
-╰━━━━━━━━━━━━━━━━━━━━━━╯
-
-> ✦ Secure • Stable • One-to-one VoIP`,
+                const sessionInbox = sock.user?.id
+                    ? sock.user.id.split(':')[0].replace(/\D/g, '') + '@s.whatsapp.net'
+                    : '';
+                if (sessionInbox) {
+                    await sock.sendMessage(sessionInbox, {
+                        image: { url: 'https://file.dnuz.top/w2cqgb.jpeg' },
+                        caption: \`╭─「 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 」─╮
+│ ✅ Connected successfully
+│ 🟢 Status: Online
+│ 🔐 Mode: \${BOT_MODE.toUpperCase()}
+╰──────────────────╯\`,
                     });
                 }
-            } catch (e) { console.log('Connect image message failed:', e.message); }
+            } catch (e) { console.log('Connect inbox message failed:', e.message); }
             if (!voipReady) {
                 voipReady = true;
                 voipInitPromise = setupVoip(sock).catch((e) => {
