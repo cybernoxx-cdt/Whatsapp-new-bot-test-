@@ -4,18 +4,27 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 
 const MAX_SESSIONS = Math.max(1, Math.min(10, Number(process.env.MAX_SESSIONS || 10)));
 const baseNumber = process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '94707085822';
 const baseKey = process.env.SESSION_KEY || 'god-voip-md';
 const sessions = [];
+const seenSessionFingerprints = new Map();
 
 for (let i = 1; i <= MAX_SESSIONS; i++) {
     const raw = process.env[`SESSION_ID_${i}`] || (i === 1 ? process.env.SESSION_ID : '');
     if (!String(raw || '').trim()) continue;
+    const normalized = String(raw).normalize('NFKC').trim();
+    const fingerprint = crypto.createHash('sha256').update(normalized).digest('hex');
+    if (seenSessionFingerprints.has(fingerprint)) {
+        console.error(`❌ [Session ${i}] Duplicate session export detected (same as SESSION_ID_${seenSessionFingerprints.get(fingerprint)}). Each slot must contain a different WhatsApp account's own session export; duplicate credentials can cause decrypt/connection conflicts.`);
+        continue;
+    }
+    seenSessionFingerprints.set(fingerprint, i);
     sessions.push({
         index: i,
-        raw: String(raw).trim(),
+        raw: normalized,
         number: process.env[`BOT_NUMBER_${i}`] || baseNumber,
     });
 }
