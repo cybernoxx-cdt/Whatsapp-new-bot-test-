@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DIR = path.resolve('./tmp');
+const DIR = path.resolve(process.env.TMP_DIR || './tmp');
 const META = path.join(DIR, 'latest-call-media.json');
 
 const EXTENSIONS = {
