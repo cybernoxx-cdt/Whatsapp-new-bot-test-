@@ -581,7 +581,7 @@ async function playVideoOnCall(voip, callId, url) {
 }
 
 // ================= SESSION =================
-const SESSION_DIR = fs.existsSync('./auth_baileys/creds.json') ? './auth_baileys' : './session';
+const SESSION_DIR = process.env.SESSION_DIR || (fs.existsSync('./auth_baileys/creds.json') ? './auth_baileys' : './session');
 const SESSION_SRC = path.join(SESSION_DIR, '.session.src');
 const Session = mongoose.models.Session || mongoose.model('Session', new mongoose.Schema({
     sessionId: { type: String, unique: true },
@@ -1139,6 +1139,7 @@ async function handleCommand(sock, m) {
 
 // ================= WEB SERVER (health check only) =================
 function startServer() {
+    if (process.env.DISABLE_SERVER === 'true') return;
     const app = express();
     app.get('/', (req, res) => res.send(`${config.botName} is running ✅`));
     app.listen(config.port, () => console.log(`🌐 Server running on port ${config.port}`));
