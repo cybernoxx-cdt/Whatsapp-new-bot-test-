@@ -1,47 +1,114 @@
-// .fullpp — set the bot's profile picture without cropping.
+// =================================================
+// 🖼️ FULL PROFILE PICTURE (No Crop, Full Display)
+// =================================================
 import sharp from 'sharp';
 import * as B from '@dnuzi/baileys';
+import config from '../config.js';
 
-const unwrap = value => value?.ephemeralMessage?.message
-    || value?.viewOnceMessage?.message
-    || value?.viewOnceMessageV2?.message
-    || value?.documentWithCaptionMessage?.message
-    || value;
+const downloadContentFromMessage =
+    B.downloadContentFromMessage ||
+    B.default?.downloadContentFromMessage;
+
+const fakeVcardQuote = {
+    key: {
+        remoteJid: 'status@broadcast',
+        participant: '13135550002@s.whatsapp.net',
+        fromMe: false,
+        id: 'META_SETPP',
+    },
+    message: {
+        contactMessage: {
+            displayName: '𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣',
+            vcard: 'BEGIN:VCARD\nVERSION:3.0\nN:;𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣;;;;\nFN:𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣\nORG:𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝖬𝖣\nTITLE:\nitem1.TEL;waid=13135550002:+13135550002\nitem1.X-ABLabel:Mobile\nEND:VCARD',
+        },
+    },
+};
 
 export default {
     name: 'fullpp',
-    aliases: ['fulldp', 'setpp', 'setbotpp', 'botpp'],
+    aliases: ['fulldp', 'setpp'],
     desc: 'Set bot profile picture without cropping',
     ownerOnly: true,
-    async run({ sock, m, jid, reply, prefix, getCachedMessage }) {
+
+    async run({ sock, m, jid, reply, prefix, isOwner }) {
         try {
-            const context = m.message?.extendedTextMessage?.contextInfo
-                || unwrap(m.message)?.imageMessage?.contextInfo;
-            let target = unwrap(m.message)?.imageMessage ? m : null;
-            if (!target && context?.stanzaId) {
-                const cached = getCachedMessage?.(context.stanzaId);
-                if (cached && unwrap(cached.message)?.imageMessage) target = cached;
-                else if (unwrap(context.quotedMessage)?.imageMessage) {
-                    target = { key: { remoteJid: jid, id: context.stanzaId, fromMe: false, participant: context.participant }, message: context.quotedMessage };
-                }
+            // Owner validation is also enforced centrally by index.js.
+            if (!isOwner && !m.key?.fromMe) {
+                return await sock.sendMessage(jid, {
+                    text: '❌ Permission denied. Only the bot owner can change the profile picture.',
+                }, { quoted: fakeVcardQuote });
             }
-            if (!target) return reply(\`🖼️ *Full Profile Picture*\n\nReply to an image with \${prefix}fullpp or send an image with .fullpp as its caption.\`);
+
+            if (typeof downloadContentFromMessage !== 'function') {
+                throw new Error('Baileys downloadContentFromMessage export is unavailable.');
+            }
+
+            const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const imageMessage = quoted?.imageMessage;
+
+            if (!imageMessage) {
+                return await sock.sendMessage(jid, {
+                    text: '⚠️ Reply to an image with ' + prefix + 'fullpp',
+                }, { quoted: fakeVcardQuote });
+            }
+
             await sock.sendMessage(jid, { react: { text: '⏳', key: m.key } });
-            const buffer = await B.downloadMediaMessage(target, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
+
+            const stream = await downloadContentFromMessage(imageMessage, 'image');
+            let buffer = Buffer.alloc(0);
+            for await (const chunk of stream) {
+                buffer = Buffer.concat([buffer, chunk]);
+            }
+            if (!buffer.length) throw new Error('The replied image could not be downloaded.');
+
             const meta = await sharp(buffer).metadata();
-            const output = await sharp(buffer).rotate().resize(640, 640, {
-                fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 1 },
-            }).jpeg({ quality: 90, chromaSubsampling: '4:2:0' }).toBuffer();
-            await sock.updateProfilePicture(B.jidNormalizedUser(sock.user.id), output);
+            const W = 640;
+            const H = 640;
+
+            const finalBuffer = await sharp(buffer)
+                .rotate()
+                .resize(W, H, {
+                    fit: 'contain',
+                    background: { r: 0, g: 0, b: 0, alpha: 1 },
+                })
+                .jpeg({ quality: 90, chromaSubsampling: '4:2:0' })
+                .toBuffer();
+
+            const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+            const sizeKB = (finalBuffer.length / 1024).toFixed(2);
+
+            console.log(
+                '[FULLPP] Updated image:',
+                W + 'x' + H,
+                '| Original:',
+                (meta.width || '?') + 'x' + (meta.height || '?'),
+                '|',
+                sizeKB + ' KB'
+            );
+
+            await sock.updateProfilePicture(botJid, finalBuffer);
+
             await sock.sendMessage(jid, {
-                image: output,
-                caption: \`✅ *Profile Picture Updated*\n📐 Original: \${meta.width || '?'} × \${meta.height || '?'}\n📐 Canvas: 640 × 640\n✦ Full image · No crop\n\n𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣\`,
-            }, { quoted: m });
+                image: finalBuffer,
+                caption:
+                    '✅ *Profile Picture Updated!*\n\n' +
+                    '📐 *Original:* ' + (meta.width || '?') + 'x' + (meta.height || '?') + '\n' +
+                    '📐 *Canvas:* ' + W + 'x' + H + '\n' +
+                    '📦 *File:* ' + sizeKB + ' KB\n\n' +
+                    '> _Full Image Displayed (No Crop)_\n' +
+                    '> © 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝖬𝖣',
+            }, { quoted: fakeVcardQuote });
+
             await sock.sendMessage(jid, { react: { text: '✅', key: m.key } });
-        } catch (error) {
-            console.error('[FULLPP]', error?.message || error);
-            await reply(\`❌ *FullPP failed:* \${error?.message || 'Unable to update profile picture.'}\`);
-            try { await sock.sendMessage(jid, { react: { text: '❌', key: m.key } }); } catch {}
+        } catch (err) {
+            console.error('[FULLPP] Error:', err?.message || err);
+            await sock.sendMessage(jid, {
+                text: '❌ *SetPP Error*\n\n> ' + (err?.message || 'Unknown error') +
+                    '\n\n_Please make sure sharp is installed._',
+            }, { quoted: fakeVcardQuote });
+            try {
+                await sock.sendMessage(jid, { react: { text: '❌', key: m.key } });
+            } catch {}
         }
     },
 };
