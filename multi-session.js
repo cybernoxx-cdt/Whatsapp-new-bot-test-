@@ -43,6 +43,8 @@ console.log(`╭─「 GOD VOIP MD MULTI-SESSION 」─
 const children = new Map();
 const status = new Map(sessions.map(s => [s.index, 'starting']));
 const restartCounts = new Map(sessions.map(s => [s.index, 0]));
+const terminalReason = new Map();
+const startedAt = new Map();
 let shuttingDown = false;
 
 function logSession(index, message) {
@@ -50,7 +52,7 @@ function logSession(index, message) {
 }
 
 function launch(session) {
-    if (shuttingDown) return;
+    if (shuttingDown || children.has(session.index) || terminalReason.has(session.index)) return;
     const dir = path.resolve('sessions', `session-${session.index}`);
     const tmpDir = path.resolve('runtime', `session-${session.index}`, 'tmp');
     fs.mkdirSync(dir, { recursive: true });
@@ -70,10 +72,13 @@ function launch(session) {
     logSession(session.index, 'Starting worker...');
     const child = spawn(process.execPath, ['index.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     children.set(session.index, child);
+    startedAt.set(session.index, Date.now());
     status.set(session.index, 'starting');
 
     let stdoutBuffer = '';
     let stderrBuffer = '';
+    let authBlocked = false;
+    let authReason = '';
     const consume = (chunk, isError = false) => {
         const key = isError ? 'stderr' : 'stdout';
         let buffer = key === 'stderr' ? stderrBuffer + chunk.toString() : stdoutBuffer + chunk.toString();
@@ -83,6 +88,11 @@ function launch(session) {
         else stdoutBuffer = buffer;
         for (const line of lines) {
             if (!line.trim()) continue;
+            if (/Logged out|loggedOut|statusCode.?401|configured session is invalid|No usable auth session found|registered=false/i.test(line)) {
+                authBlocked = true;
+                authReason = /Logged out|loggedOut|statusCode.?401/i.test(line) ? 'WhatsApp logged this device out' : 'Session credentials are invalid or unavailable';
+                status.set(session.index, 'logged_out');
+            }
             if (/\bConnected:/i.test(line)) status.set(session.index, 'connected');
             if (/VoIP listening/i.test(line)) status.set(session.index, 'online');
             if (/connection.*close|logged out|invalid.*session|No usable auth/i.test(line)) {
@@ -99,7 +109,15 @@ function launch(session) {
         children.delete(session.index);
         status.set(session.index, 'stopped');
         if (shuttingDown) return;
-        const count = (restartCounts.get(session.index) || 0) + 1;
+        if (authBlocked) {
+            status.set(session.index, 'logged_out');
+            terminalReason.set(session.index, authReason);
+            logSession(session.index, '⛔ Restart disabled: ' + authReason + '. Replace SESSION_ID_' + session.index + ' with a freshly linked session export.');
+            return;
+        }
+        const uptime = Date.now() - (startedAt.get(session.index) || Date.now());
+        const previous = restartCounts.get(session.index) || 0;
+        const count = uptime >= 300000 ? 1 : previous + 1;
         restartCounts.set(session.index, count);
         const delay = Math.min(60000, 5000 * (2 ** Math.min(count - 1, 4)));
         logSession(session.index, `Worker exited (code=${code}, signal=${signal || 'none'}); restart #${count} in ${Math.ceil(delay / 1000)}s`);
@@ -108,9 +126,10 @@ function launch(session) {
 }
 
 function reportStatus() {
-    const counts = { starting: 0, connected: 0, online: 0, reconnecting: 0, stopped: 0 };
+    const counts = { starting: 0, connected: 0, online: 0, reconnecting: 0, stopped: 0, logged_out: 0 };
     for (const value of status.values()) counts[value] = (counts[value] || 0) + 1;
-    console.log(`📊 Sessions: ${sessions.length} configured | ${counts.online} VoIP-ready | ${counts.connected} WhatsApp-connected | ${counts.reconnecting} reconnecting | ${counts.starting} starting | ${counts.stopped} stopped`);
+    console.log(`📊 Sessions: ${sessions.length} configured | ${counts.online} VoIP-ready | ${counts.connected} WhatsApp-connected | ${counts.reconnecting} reconnecting | ${counts.starting} starting | ${counts.logged_out} logged-out/invalid | ${counts.stopped} stopped`);
+    for (const [index, reason] of terminalReason) logSession(index, 'Action required: ' + reason);
 }
 const statusTimer = setInterval(reportStatus, 60000);
 statusTimer.unref();
