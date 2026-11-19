@@ -1255,7 +1255,7 @@ async function start() {
                         caption: `╭─「 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 」─╮
 │ ✅ Connected successfully
 │ 🟢 Status: Online
-│ 🔐 Mode: \${BOT_MODE.toUpperCase()}
+│ 🔐 Mode: ${BOT_MODE.toUpperCase()}
 ╰──────────────────╯`,
                     });
                 }
