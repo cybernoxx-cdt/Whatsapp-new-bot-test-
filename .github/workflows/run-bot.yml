@@ -41,9 +41,38 @@ jobs:
       - name: Validate required configuration
         env:
           BOT_NUMBER: ${{ secrets.BOT_NUMBER }}
+          SESSION_ID_1: ${{ secrets.SESSION_ID_1 }}
+          SESSION_ID_2: ${{ secrets.SESSION_ID_2 }}
+          SESSION_ID_3: ${{ secrets.SESSION_ID_3 }}
+          SESSION_ID_4: ${{ secrets.SESSION_ID_4 }}
+          SESSION_ID_5: ${{ secrets.SESSION_ID_5 }}
+          SESSION_ID_6: ${{ secrets.SESSION_ID_6 }}
+          SESSION_ID_7: ${{ secrets.SESSION_ID_7 }}
+          SESSION_ID_8: ${{ secrets.SESSION_ID_8 }}
+          SESSION_ID_9: ${{ secrets.SESSION_ID_9 }}
+          SESSION_ID_10: ${{ secrets.SESSION_ID_10 }}
+          BOT_NUMBER_2: ${{ secrets.BOT_NUMBER_2 }}
+          BOT_NUMBER_3: ${{ secrets.BOT_NUMBER_3 }}
+          BOT_NUMBER_4: ${{ secrets.BOT_NUMBER_4 }}
+          BOT_NUMBER_5: ${{ secrets.BOT_NUMBER_5 }}
+          BOT_NUMBER_6: ${{ secrets.BOT_NUMBER_6 }}
+          BOT_NUMBER_7: ${{ secrets.BOT_NUMBER_7 }}
+          BOT_NUMBER_8: ${{ secrets.BOT_NUMBER_8 }}
+          BOT_NUMBER_9: ${{ secrets.BOT_NUMBER_9 }}
+          BOT_NUMBER_10: ${{ secrets.BOT_NUMBER_10 }}
           OWNER_NUMBER: ${{ secrets.OWNER_NUMBER }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           SESSION_ID: ${{ secrets.SESSION_ID }}
+          SESSION_ID_1: ${{ secrets.SESSION_ID_1 }}
+          SESSION_ID_2: ${{ secrets.SESSION_ID_2 }}
+          SESSION_ID_3: ${{ secrets.SESSION_ID_3 }}
+          SESSION_ID_4: ${{ secrets.SESSION_ID_4 }}
+          SESSION_ID_5: ${{ secrets.SESSION_ID_5 }}
+          SESSION_ID_6: ${{ secrets.SESSION_ID_6 }}
+          SESSION_ID_7: ${{ secrets.SESSION_ID_7 }}
+          SESSION_ID_8: ${{ secrets.SESSION_ID_8 }}
+          SESSION_ID_9: ${{ secrets.SESSION_ID_9 }}
+          SESSION_ID_10: ${{ secrets.SESSION_ID_10 }}
         run: |
           if [ -z "$BOT_NUMBER" ] && [ -z "$OWNER_NUMBER" ]; then
             echo "::error::Missing BOT_NUMBER or OWNER_NUMBER GitHub Secret. Add the WhatsApp number in international format (digits only) under Settings > Secrets and variables > Actions."
@@ -53,8 +82,8 @@ jobs:
             echo "::error::Missing MONGODB_URI GitHub Secret."
             exit 1
           fi
-          if [ -z "$SESSION_ID" ]; then
-            echo "::warning::SESSION_ID is empty. A valid existing local session is required for headless GitHub Actions."
+          if [ -z "$SESSION_ID" ] && [ -z "$SESSION_ID_1" ]; then
+            echo "::warning::No SESSION_ID or SESSION_ID_1 secret found. Add at least one valid session for headless login."
           fi
           if [ -z "${{ secrets.DNUZ_API_KEY }}" ]; then
             echo "::warning::DNUZ_API_KEY is not available to this workflow. Add it under Settings > Secrets and variables > Actions, then rerun."
@@ -88,7 +117,7 @@ jobs:
           while true; do
             echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Starting GOD VOIP MD..."
             set +e
-            node index.js
+            node multi-session.js
             exit_code=$?
             set -e
 
