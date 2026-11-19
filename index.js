@@ -1097,11 +1097,11 @@ async function handleCommand(sock, m) {
         const aliases = { 'inbox&group': 'both', 'inbox+group': 'both', 'inboxandgroup': 'both', 'public': 'both' };
         const nextMode = aliases[requested] || requested;
         if (!['self', 'inbox', 'group', 'both'].includes(nextMode)) {
-            return reply(`⚙️ *Bot Mode*\n\n• \${prefix}mode self\n• \${prefix}mode inbox\n• \${prefix}mode group\n• \${prefix}mode both`);
+            return reply(`⚙️ *Bot Mode*\n\n• ${prefix}mode self\n• ${prefix}mode inbox\n• ${prefix}mode group\n• ${prefix}mode both`);
         }
         await setBotMode(nextMode);
         const labels = { self: 'OWNER ONLY', inbox: 'INBOX ONLY', group: 'GROUP ONLY', both: 'INBOX & GROUP' };
-        return reply(`✅ *Mode updated:* \${labels[BOT_MODE]}\n✦ 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣`);
+        return reply(`✅ *Mode updated:* ${labels[BOT_MODE]}\n✦ 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣`);
     }
 
     if (isVcall || isAcall) {
