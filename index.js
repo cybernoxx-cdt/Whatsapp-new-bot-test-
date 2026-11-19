@@ -1196,7 +1196,7 @@ async function start() {
     });
 
     ACTIVE_SOCKET = sock;
-    sock.public = BOT_MODE === 'public';
+    sock.public = BOT_MODE !== 'self';
 
     // Session නැත්නම් config.js එකේ number එකට pair code එක logs වල පෙන්වනවා
     if (!sock.authState.creds.registered && !pairRequested) {
