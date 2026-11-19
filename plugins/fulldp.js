@@ -57,9 +57,7 @@ export default {
             const imageMessage = quoted?.imageMessage;
             if (!imageMessage) {
                 return await sock.sendMessage(jid, {
-                    text: '❌ *Reply to an image!*
-
-> Reply to an image with ' + prefix + 'setpp',
+                    text: '❌ *Reply to an image!*\n\n> Reply to an image with ' + prefix + 'setpp',
                 }, { quoted: fakeVcardQuote });
             }
 
