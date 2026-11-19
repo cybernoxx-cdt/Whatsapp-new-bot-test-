@@ -134,19 +134,19 @@ const MENU_TEXT = () =>
 *Auto Call:* ${statusIcon()}
 
 *Auto answer*
-▫️ \`${prefix}call on\` — auto call ON
-▫️ \`${prefix}call off\` — auto call OFF
-▫️ \`${prefix}call\` — status බලන්න
+▫️ `${prefix}call on` — auto call ON
+▫️ `${prefix}call off` — auto call OFF
+▫️ `${prefix}call` — status බලන්න
 
 *Call යවන්න (owner)*
-▫️ \`${prefix}vcall 94771234567\` — one-to-one video call
-▫️ \`${prefix}acall 94771234567\` — one-to-one audio call
-▫️ Many numbers: \`${prefix}acall 9477xxxxxxx,9476xxxxxxx [link]\` (up to the call limit)
+▫️ `${prefix}vcall 94771234567` — one-to-one video call
+▫️ `${prefix}acall 94771234567` — one-to-one audio call
+▫️ Many numbers: `${prefix}acall 9477xxxxxxx,9476xxxxxxx [link]` (up to the call limit)
 ▫️ Any audio/video link works — auto converted (audio→ogg, video→mp4)
-▫️ \`${prefix}tourl\` — reply to audio/video to save latest local call media
-▫️ \`${prefix}self\` / \`${prefix}public\` — bot access mode
-▫️ \`${prefix}call-menu\` — මේ menu එක
-▫️ \`${prefix}c-ping\` — speed
+▫️ `${prefix}tourl` — reply to audio/video to save latest local call media
+▫️ `${prefix}self` / `${prefix}public` — bot access mode
+▫️ `${prefix}call-menu` — මේ menu එක
+▫️ `${prefix}c-ping` — speed
 
 *Auto answer වැඩ කරන විදිහ*
 Audio call → voice file
@@ -163,7 +163,7 @@ ${CALL_ON
     ? 'එන one-to-one calls සඳහා පමණක් configured media auto play වෙනවා.'
     : 'ඔයා ON කරනකම් bot එක calls ignore කරනවා.'}
 
-සියලු commands සඳහා \`${prefix}call-menu\` use කරන්න.
+සියලු commands සඳහා `${prefix}call-menu` use කරන්න.
 
 ${texts.footer}`;
 
@@ -932,7 +932,7 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
     const numbers = [...new Set([...numberPart.matchAll(/\+?\d[\d\s-]{6,17}\d/g)].map(x => clean(x[0])))];
     const residue = numberPart.replace(/[()+\s,;\d-]/g, '');
     if (residue || numbers.length < 1 || numbers.length > MAX_CONCURRENT_CALLS || numbers.some(n => n.length < 8 || n.length > 15)) {
-        await reply(`❌ Number format එක වැරදියි. 1 සිට ${MAX_CONCURRENT_CALLS} දක්වා numbers දෙන්න.\n\n*Examples:*\n\`${prefix}${cmd} 94771234567\`\n\`${prefix}${cmd} 94771234567,94777654321\`\n\`${prefix}${cmd} 94771234567 94777654321 https://site.com/any-audio-link\`\n\n${texts.footer}`);
+        await reply(`❌ Number format එක වැරදියි. 1 සිට ${MAX_CONCURRENT_CALLS} දක්වා numbers දෙන්න.\n\n*Examples:*\n`${prefix}${cmd} 94771234567`\n`${prefix}${cmd} 94771234567,94777654321`\n`${prefix}${cmd} 94771234567 94777654321 https://site.com/any-audio-link`\n\n${texts.footer}`);
         return;
     }
     const latest = getLatestCallMedia();
@@ -1097,11 +1097,11 @@ async function handleCommand(sock, m) {
         const aliases = { 'inbox&group': 'both', 'inbox+group': 'both', 'inboxandgroup': 'both', 'public': 'both' };
         const nextMode = aliases[requested] || requested;
         if (!['self', 'inbox', 'group', 'both'].includes(nextMode)) {
-            return reply(\`⚙️ *Bot Mode*\n\n• \${prefix}mode self\n• \${prefix}mode inbox\n• \${prefix}mode group\n• \${prefix}mode both\`);
+            return reply(`⚙️ *Bot Mode*\n\n• \${prefix}mode self\n• \${prefix}mode inbox\n• \${prefix}mode group\n• \${prefix}mode both`);
         }
         await setBotMode(nextMode);
         const labels = { self: 'OWNER ONLY', inbox: 'INBOX ONLY', group: 'GROUP ONLY', both: 'INBOX & GROUP' };
-        return reply(\`✅ *Mode updated:* \${labels[BOT_MODE]}\n✦ 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣\`);
+        return reply(`✅ *Mode updated:* \${labels[BOT_MODE]}\n✦ 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣`);
     }
 
     if (isVcall || isAcall) {
@@ -1252,11 +1252,11 @@ async function start() {
                 if (sessionInbox) {
                     await sock.sendMessage(sessionInbox, {
                         image: { url: 'https://file.dnuz.top/w2cqgb.jpeg' },
-                        caption: \`╭─「 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 」─╮
+                        caption: `╭─「 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 」─╮
 │ ✅ Connected successfully
 │ 🟢 Status: Online
 │ 🔐 Mode: \${BOT_MODE.toUpperCase()}
-╰──────────────────╯\`,
+╰──────────────────╯`,
                     });
                 }
             } catch (e) { console.log('Connect inbox message failed:', e.message); }
