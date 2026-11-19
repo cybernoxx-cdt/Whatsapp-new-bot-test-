@@ -1080,7 +1080,31 @@ async function handleCommand(sock, m) {
     // Group messages identify the sender via participant; newer Baileys builds
     // may expose the phone-number JID as participantAlt when the primary is an LID.
     const senders = senderNumbers(m);
-    const isOwner = !!m.key.fromMe || senders.some(number => OWNERS.includes(number));
+
+    // WhatsApp self-chat can arrive with an LID/alternate JID and may not
+    // consistently set fromMe on every linked-device event. Match the chat
+    // against the connected account's own PN/LID identifiers as a fallback.
+    const ownIdentityValues = [
+        sock.user?.id,
+        sock.user?.jid,
+        sock.user?.phoneNumber,
+        sock.user?.lid,
+        sock.user?.lidJid,
+        m.key?.remoteJidAlt,
+        m.key?.participantAlt,
+    ].filter(Boolean).map(value => String(value).toLowerCase());
+    const normalizeJid = value => String(value || '').toLowerCase().split(':')[0];
+    const ownJids = new Set(ownIdentityValues.map(normalizeJid));
+    const ownNumbers = new Set(ownIdentityValues.map(value =>
+        clean(value.split('@')[0].split(':')[0])
+    ).filter(Boolean));
+    const chatJid = normalizeJid(jid);
+    const isBotSelfChat = ownJids.has(chatJid)
+        || (!!chatJid && ownNumbers.has(clean(chatJid.split('@')[0])))
+        || senders.some(number => ownNumbers.has(number));
+
+    const isOwner = !!m.key.fromMe || isBotSelfChat
+        || senders.some(number => OWNERS.includes(number));
 
     const isGroupChat = jid.endsWith('@g.us');
     const inAllowedChat = BOT_MODE === 'both'
@@ -1268,13 +1292,16 @@ async function start() {
                     ? sock.user.id.split(':')[0].replace(/\D/g, '') + '@s.whatsapp.net'
                     : '';
                 if (sessionInbox) {
-                    const connectCaption = `╭─「 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 」─╮
-│ ✅ Connected
-│ 🟢 Status : Online
-│ ⚙️ Mode : ${BOT_MODE.toUpperCase()}
-╰────────────────────╯
+                    const connectCaption = `╭━━━〔 𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣 〕━━━╮
+┃
+┃  ✨ *CONNECTED SUCCESSFULLY*
+┃  🟢 Status  : *ONLINE*
+┃  ⚙️ Mode    : *${BOT_MODE.toUpperCase()}*
+┃  🔐 Session : *ACTIVE*
+┃
+╰━━━━━━━━━━━━━━━━━━━━━━╯
 
-> Powered by GOD VOIP MD`;
+          _POWERED BY GOD VOIP MD_`;
                     try {
                         await sock.sendMessage(sessionInbox, {
                             image: { url: 'https://file.dnuz.top/w2cqgb.jpeg' },
