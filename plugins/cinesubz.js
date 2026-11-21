@@ -2,7 +2,8 @@
 // Commands: .cs <query>, .movie <query>, .tv <query>
 // Flow: .cs 1 opens a result; .cs ep 1 opens an episode; .cs dl 1 resolves a download.
 const BASE = 'https://mochi-apis.koyeb.app/api/movie/cinesubz';
-const KEY = process.env.CINESUBZ_API_KEY || '';
+// Shared Mochi API credential. DNUZ_API_KEY remains a backward-compatible fallback.
+const KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env.CINESUBZ_API_KEY || '';
 const sessions = new Map();
 const TTL = 20 * 60 * 1000;
 const clean = (v, n = 220) => String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#8217;|&#039;/g, "'").replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -11,7 +12,7 @@ const keyOf = c => String(c.jid) + ':' + String(c.m?.key?.participant || c.m?.ke
 function get(c) { const s = sessions.get(keyOf(c)); if (!s || Date.now() - s.at > TTL) { sessions.delete(keyOf(c)); return null; } s.at = Date.now(); return s; }
 function set(c, s) { sessions.set(keyOf(c), { ...s, at: Date.now() }); if (sessions.size > 500) for (const [k] of [...sessions].sort((a,b)=>a[1].at-b[1].at).slice(0,100)) sessions.delete(k); }
 async function api(path, params = {}) {
-    if (!KEY) throw new Error('CINESUBZ_API_KEY GitHub Secret එක configure කරලා නැහැ.');
+    if (!KEY) throw new Error('MOCHI_API_KEY (හෝ DNUZ_API_KEY) GitHub Secret එක configure කරලා නැහැ.');
     const u = new URL(BASE + '/' + path);
     for (const [k,v] of Object.entries(params)) if (v != null && v !== '') u.searchParams.set(k, String(v));
     u.searchParams.set('api_key', KEY);
