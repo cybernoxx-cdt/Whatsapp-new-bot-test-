@@ -1055,7 +1055,27 @@ const getCachedMessage = (id) => (id ? MSG_CACHE.get(id) || null : null);
 async function handleCommand(sock, m) {
     const body = extractCommandText(m.message);
     const trimmed = String(body || '').trim();
-    if (!trimmed.toLowerCase().startsWith(prefix)) return;
+    const jid = m.key.remoteJid;
+    if (!jid || jid === 'status@broadcast') return;
+
+    // Allow plain numeric replies to continue CineSubz selection sessions.
+    if (trimmed && !trimmed.toLowerCase().startsWith(prefix)) {
+        const cinesubz = PLUGIN_MAP.get('cz') || PLUGIN_MAP.get('cinesubz');
+        if (cinesubz && typeof cinesubz.onMessage === 'function') {
+            const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
+            try {
+                const handled = await cinesubz.onMessage({
+                    sock, m, jid, config, prefix, reply, text: trimmed,
+                    args: [], isOwner: !!m.key.fromMe,
+                    state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
+                });
+                if (handled) return;
+            } catch (error) {
+                console.log('[CINESUBZ REPLY ROUTER]', error?.message || error);
+            }
+        }
+        return;
+    }
 
     // Keep URLs case-sensitive; normalize only the command name.
     const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
