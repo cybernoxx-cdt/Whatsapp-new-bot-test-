@@ -32,12 +32,14 @@ function movieInfo(d) {
     a.push('','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); return a.join('\n');
 }
 function tvInfo(d) {
-    const eps=[]; for(const s of d.seasons||[])for(const e of s.episodes||[])eps.push({...e,season_no:s.season_no});
+    const seasons=(d.seasons||[]).map(s=>({...s,episodes:(s.episodes||[]).filter(e=>valid(e.url))}));
+    const eps=[]; for(const s of seasons)for(const e of s.episodes)eps.push({...e,season_no:s.season_no});
     const a=['╭━━〔 📺 TV SHOW DETAILS 〕━━╮','','📺 *'+clean(d.title,160)+'*','📅 Year: '+clean(d.year||'N/A',20),'⭐ IMDb: '+clean(d.imdbRating||'N/A',20),'🆔 IMDb ID: '+clean(d.imdbId||'N/A',25)];
     if(d.genres?.length)a.push('🏷️ Genres: '+d.genres.map(x=>clean(x,30)).join(', '));
     if(d.cast?.length)a.push('','*CAST*',...d.cast.slice(0,5).map(x=>'• '+clean(x.name,50)+' — '+clean(x.role||'',60)));
-    if(eps.length)a.push('','*EPISODES ('+eps.length+')*',numbered(eps,e=>'S'+e.season_no+' E'+e.episode_no+' — '+clean(e.title,80),40),'','Open episode: .cz ep 1');
-    a.push('','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); return { text:a.join('\n'), eps };
+    if(seasons.length)a.push('','*SEASONS*',...seasons.map((s,i)=>'S'+s.season_no+' — '+s.episodes.length+' episodes | Select: .cz season '+(i+1)));
+    if(eps.length)a.push('','*EPISODES ('+eps.length+')*',numbered(eps,e=>'S'+e.season_no+' E'+e.episode_no+' — '+clean(e.title,80),40),'','Open episode: .cz ep 1','Download a whole season: .cz season 1 then .cz season dl 1');
+    a.push('','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); return { text:a.join('\n'), eps, seasons };
 }
 function episodeInfo(d) {
     const a=['╭━━〔 📺 EPISODE DETAILS 〕━━╮','','🎬 *'+clean(d.title||'Episode',140)+'*','📺 Show: '+clean(d.show_name||'N/A',80),'📅 Year: '+clean(d.year||'N/A',20),'⭐ Rating: '+clean(d.rating||'N/A',20)];
@@ -62,13 +64,74 @@ async function openMovie(c,x) {
 }
 async function openTv(c,x) {
     await c.reply('📺 TV show details load කරනවා...');
-    const d=(await api('tv',{url:x.url})).data||{},f=tvInfo(d); set(c,{mode:'tv',eps:f.eps});
+    const d=(await api('tv',{url:x.url})).data||{},f=tvInfo(d); set(c,{mode:'tv',eps:f.eps,seasons:f.seasons,selectedSeason:null});
     if(d.image&&/^https:\/\//i.test(d.image))await c.sock.sendMessage(c.jid,{image:{url:d.image},caption:f.text},{quoted:c.m}); else await c.reply(f.text);
 }
 async function openEpisode(c,x) {
     if(!valid(x?.url))throw new Error('Episode URL එක valid නැහැ.');
     await c.reply('📺 Episode details load කරනවා...');
     const d=(await api('episode',{url:x.url})).data||{}; set(c,{mode:'episode',data:d,links:d.dl_links||[]}); await c.reply(episodeInfo(d));
+}
+function qualityScore(info) {
+    const m=String(info||'').match(/(2160|1440|1080|720|480|360)p/i);
+    return m ? Number(m[1]) : 0;
+}
+async function resolveEpisodeDirect(ep) {
+    if(!valid(ep?.url))throw new Error('Invalid episode URL');
+    const info=(await api('episode',{url:ep.url})).data||{};
+    const options=(info.dl_links||[]).filter(x=>valid(x?.link||x?.url)).sort((a,b)=>qualityScore(b.info)-qualityScore(a.info));
+    if(!options.length)throw new Error('No episode download options');
+    let lastError;
+    for(const option of options) {
+        try {
+            const page=option.link||option.url;
+            const result=(await api('download',{url:page,type:'episode'})).data||{};
+            const direct=(result.dl_links||[]).find(x=>/^https:\/\//i.test(x?.url||''));
+            if(direct)return {url:direct.url,name:result.name||info.title||ep.title||'Episode',size:result.size||'',quality:option.info||'Best available'};
+            lastError=new Error('No direct URL returned');
+        } catch(error) { lastError=error; }
+    }
+    throw lastError||new Error('Could not resolve episode');
+}
+async function downloadSeason(c,s,index) {
+    const season=s.seasons?.[index];
+    if(!season)return c.reply('❌ Season එක හමු වුණේ නැහැ.');
+    const episodes=(season.episodes||[]).filter(e=>valid(e.url));
+    if(!episodes.length)return c.reply('❌ මේ season එකේ valid episode links නැහැ.');
+    if(episodes.length>50)return c.reply('⚠️ මේ season එකේ episodes 50කට වැඩියි. Server/API overload නොවීමට එකවර 50ක් දක්වා පමණක් support කරනවා.');
+    await c.reply('⏳ *Season '+clean(season.season_no,8)+' bulk download links සකස් කරනවා...*\n📺 Episodes: '+episodes.length+'\n\nඑක් එක් episode එකේ හොඳම available quality එක resolve කරනවා. ටිකක් ඉවසන්න.');
+    const resolved=[],failed=[];
+    for(let i=0;i<episodes.length;i++) {
+        const ep=episodes[i];
+        try {
+            const direct=await resolveEpisodeDirect(ep);
+            resolved.push({episode:ep,url:direct.url,quality:direct.quality,size:direct.size});
+        } catch(error) {
+            failed.push({episode:ep,error:clean(error?.message||'Resolve failed',90)});
+        }
+        if((i+1)%4===0 && i+1<episodes.length) {
+            await c.reply('⏳ Progress: '+(i+1)+'/'+episodes.length+' episodes processed...');
+        }
+    }
+    const lines=resolved.map((x,i)=>(i+1)+'. *E'+clean(x.episode.episode_no,8)+' — '+clean(x.episode.title||'Episode',75)+'*\n'+clean(x.quality,90)+(x.size?' • '+clean(x.size,20):'')+'\n'+x.url);
+    const header='╭━━〔 📦 SEASON '+clean(season.season_no,8)+' DOWNLOADS 〕━━╮\n📺 *'+clean(s.title||'TV Series',120)+'*\n✅ Ready: '+resolved.length+'/'+episodes.length+'\n';
+    const footer='\n\nSigned URLs may expire; download/save them soon.\n> ✦ GOD VOIP MD\n╰━━━━━━━━━━━━━━━━━━━━╯';
+    if(!resolved.length) {
+        await c.reply('❌ Direct links resolve වුණේ නැහැ. '+failed.length+' episodes fail වුණා. ටිකකින් නැවත try කරන්න.');
+        return;
+    }
+    const chunks=[];
+    let current=header;
+    for(const line of lines) {
+        if((current+'\n\n'+line+footer).length>3200 && current!==header) { chunks.push(current); current=header+'(continued)\n'; }
+        current+=(current===header?'':'\n\n')+line;
+    }
+    if(current.trim())chunks.push(current+footer);
+    for(const chunk of chunks)await c.reply(chunk);
+    if(failed.length) {
+        await c.reply('⚠️ *Failed episodes ('+failed.length+'):*\n'+failed.map(x=>'• E'+clean(x.episode.episode_no,8)+' — '+clean(x.error,90)).join('\n'));
+    }
+    set(c,{...s,mode:'tv',selectedSeason:index});
 }
 async function download(c,s,n) {
     const item=s.links?.[n]; if(!item)return c.reply('❌ Download option එක හමු වුණේ නැහැ.');
@@ -82,7 +145,7 @@ async function download(c,s,n) {
 }
 export default {
     name:'cinesubz', aliases:['cs','cz','cinesearch'],
-    desc:'Search CineSubz movies, TV shows, episodes and download links',
+    desc:'Search CineSubz movies/TV shows, browse seasons and bulk-download episode links',
     ownerOnly:false,
     async run(c) {
         const raw=clean(c.text||'',350),p=raw.split(/\s+/).filter(Boolean),first=(p[0]||'').toLowerCase();
@@ -93,6 +156,21 @@ export default {
             if(first==='tv'||first==='show'||first==='tvshow')return search(c,p.slice(1).join(' '),'tvshows');
             if(first==='search')return search(c,p.slice(1).join(' '));
             const s=get(c);
+            if(first==='season') {
+                if(!s||s.mode!=='tv'||!s.seasons?.length)return c.reply('⚠️ මුලින් TV show එකක් open කරන්න.');
+                const action=(p[1]||'').toLowerCase();
+                if(action==='dl'||action==='download') {
+                    const selected=Number(p[2]);
+                    const index=Number.isInteger(selected)&&selected>0?selected-1:s.selectedSeason;
+                    if(!Number.isInteger(index)||index<0)return c.reply('Usage: .cz season 1\nඊට පස්සේ: .cz season dl 1');
+                    return downloadSeason(c,s,index);
+                }
+                const n=Number(p[1]);
+                if(!Number.isInteger(n)||n<1||n>s.seasons.length)return c.reply('Season number එක 1-'+s.seasons.length+' අතරින් දෙන්න.');
+                const season=s.seasons[n-1];
+                set(c,{...s,selectedSeason:n-1});
+                return c.reply('📺 *Season '+clean(season.season_no,8)+' selected*\nEpisodes: '+season.episodes.length+'\n\n⬇️ All episode links: '+c.prefix+'cz season dl '+n+'\n\nහොඳම available quality එකෙන් episodes සියල්ලටම direct links සකස් කරනවා.');
+            }
             if(first==='dl'||first==='download') {const n=Number(p[1]);if(!s||!['movie','episode'].includes(s.mode))return c.reply('⚠️ Movie/Episode details open කරන්න.');if(!Number.isInteger(n)||n<1)return c.reply('Usage: .cz dl 1');return download(c,s,n-1);}
             if(first==='ep'||first==='episode') {const n=Number(p[1]);if(!s||s.mode!=='tv')return c.reply('⚠️ මුලින් TV show එකක් open කරන්න.');if(!Number.isInteger(n)||n<1||n>s.eps.length)return c.reply('Episode number එක 1-'+s.eps.length+' අතරින් දෙන්න.');return openEpisode(c,s.eps[n-1]);}
             if(first==='next'||first==='prev'||first==='previous') {if(!s||s.mode!=='episode')return c.reply('⚠️ Episode එකක් open කරන්න.');const u=first==='next'?s.data?.nav?.next_episode:s.data?.nav?.previous_episode;if(!valid(u))return c.reply('ℹ️ තවත් episode එකක් නැහැ.');return openEpisode(c,{url:u});}
