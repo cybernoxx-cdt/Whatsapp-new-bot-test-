@@ -80,7 +80,7 @@ async function download(c,s,n) {
     a.push('','Signed download URL expire විය හැකියි.','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); await c.reply(a.join('\n'));
 }
 export default {
-    name:'cinesubz', aliases:['cs','movie','tv','cinesearch'],
+    name:'cinesubz', aliases:['cs','cinesearch'],
     desc:'Search CineSubz movies, TV shows, episodes and download links',
     ownerOnly:false,
     async run(c) {
