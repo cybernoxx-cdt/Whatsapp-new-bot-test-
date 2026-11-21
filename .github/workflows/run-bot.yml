@@ -85,7 +85,9 @@ jobs:
           BOT_NUMBER_10: ${{ secrets.BOT_NUMBER_10 }}
           SESSION_KEY: ${{ secrets.SESSION_KEY }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          MOCHI_API_KEY: ${{ secrets.MOCHI_API_KEY }}
+          # Pass both names for compatibility with older plugins.
+          MOCHI_API_KEY: ${{ secrets.MOCHI_API_KEY || secrets.DNUZ_API_KEY }}
+          DNUZ_API_KEY: ${{ secrets.DNUZ_API_KEY || secrets.MOCHI_API_KEY }}
           DNUZ_API_BASE: ${{ secrets.DNUZ_API_BASE }}
           DEFAULT_AUDIO_URL: ${{ secrets.DEFAULT_AUDIO_URL }}
           DEFAULT_VIDEO_URL: ${{ secrets.DEFAULT_VIDEO_URL }}
