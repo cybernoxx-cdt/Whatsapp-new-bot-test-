@@ -4,6 +4,7 @@ const KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env
 const sessions = new Map();
 const TTL = 30 * 60 * 1000;
 const MAX_BULK_EPISODES = 20;
+const cancelledSeasons = new Set(); // session keys whose delivery was cancelled (P7)
 const clean = (v, n = 180) => String(v ?? '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#8217;|&#039;/g, "'").replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const bold = v => '*' + clean(v, 450) + '*';
 const validPage = value => {
@@ -12,10 +13,24 @@ const validPage = value => {
     return u.protocol === 'https:' && (u.hostname === 'cinesubz.net' || u.hostname.endsWith('.cinesubz.net'));
   } catch { return false; }
 };
+function isPrivateOrReservedHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '[::1]') return true;
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false; // non-IP hostnames are checked by protocol + allowlist elsewhere
+  const [a, b] = m.slice(1).map(Number);
+  if (m.slice(1).some(n => Number(n) > 255)) return true;
+  return a === 0 || a === 10 || a === 127 || a === 169 && b === 254 ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) || a >= 224 ||
+    (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19 || b === 51 || b === 100)) ||
+    (a === 203 && b === 0 && Number(m[3]) === 113);
+}
+export function isPrivateOrReservedHostPublic(hostname) { return isPrivateOrReservedHost(hostname); }
 const validDirect = value => {
   try {
     const u = new URL(String(value || ''));
-    return u.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(u.hostname);
+    return u.protocol === 'https:' && !isPrivateOrReservedHost(u.hostname);
   } catch { return false; }
 };
 const sessionKey = c => String(c.jid) + '|' + String(c.m?.key?.participantAlt || c.m?.key?.participant || c.m?.key?.remoteJidAlt || c.jid);
@@ -40,9 +55,8 @@ async function api(endpoint, params = {}) {
   if (!KEY) throw new Error('MOCHI_API_KEY secret එක hosting environment secrets වල configure කරන්න.');
   const url = new URL(BASE + '/' + endpoint);
   for (const [key, value] of Object.entries(params)) if (value != null && value !== '') url.searchParams.set(key, String(value));
-  url.searchParams.set('api_key', KEY);
   const response = await fetch(url, {
-    headers: { Accept: 'application/json', 'User-Agent': 'GOD-VOIP-MD-CineSubz/5.0' },
+    headers: { Accept: 'application/json', 'User-Agent': 'GOD-VOIP-MD-CineSubz/5.0', Authorization: 'Bearer ' + KEY },
     signal: AbortSignal.timeout(40000)
   });
   const body = await response.json().catch(() => null);
@@ -151,7 +165,7 @@ function imageFrom(objects) {
 function validImage(value) {
   try {
     const u = new URL(String(value || ''));
-    return u.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(u.hostname) && !/\.(?:mp4|mkv|mp3|zip|pdf)(?:$|[?#])/i.test(u.pathname + u.search);
+    return u.protocol === 'https:' && !isPrivateOrReservedHost(u.hostname) && !/\.(?:mp4|mkv|mp3|zip|pdf)(?:$|[?#])/i.test(u.pathname + u.search);
   } catch { return false; }
 }
 async function pagePoster(pageUrl) {
@@ -269,7 +283,8 @@ async function resolveDirect(option, type = 'episode') {
 async function sendMedia(c, media, episode, index, total) {
   const epNo = episode.episode_no ?? index + 1;
   const epTitle = clean(episode.title || 'Episode ' + epNo, 90);
-  const fileName = clean((media.name || ('Episode ' + epNo)) + '.mp4', 150).replace(/[\\/:*?"<>|]/g, '_');
+  const baseName = String(media.name || ('Episode ' + epNo)).replace(/\.mp4$/i, '');
+  const fileName = clean(baseName + '.mp4', 150).replace(/[\\/:*?"<>|]/g, '_');
   const caption = '📺 *' + clean(c._seriesTitle || 'CineSubz Series', 100) + '*\n' +
     '🎞️ *Episode ' + epNo + ':* ' + epTitle + '\n' +
     '🎥 *Quality:* ' + clean(media.quality, 100) + '\n' +
@@ -290,7 +305,7 @@ async function downloadOne(c, session, option) {
   await say(c, '⏳ *Preparing ' + bold(session.title || 'episode') + ' — ' + bold(qualityLabel(option)) + '*\nPlease wait while WhatsApp uploads the MP4 file…');
   const media = await resolveDirect(option, session.mode === 'movie_quality' ? 'movie' : 'episode');
   if (session.mode === 'movie_quality') {
-    await c.sock.sendMessage(c.jid, { document: { url: media.url }, mimetype: 'video/mp4', fileName: clean(media.name, 150) + '.mp4', caption: '🎬 *' + clean(session.title, 120) + '*\n🎥 *Quality:* ' + clean(media.quality, 100) + '\n✦ *GOD VOIP MD*' }, { quoted: c.m });
+    await c.sock.sendMessage(c.jid, { document: { url: media.url }, mimetype: 'video/mp4', fileName: clean(String(media.name || '').replace(/\.mp4$/i, ''), 150) + '.mp4', caption: '🎬 *' + clean(session.title, 120) + '*\n🎥 *Quality:* ' + clean(media.quality, 100) + '\n✦ *GOD VOIP MD*' }, { quoted: c.m });
   } else {
     await sendMedia(c, media, session.episode, 0, 1);
   }
@@ -348,10 +363,17 @@ function selectEpisodeOption(item, quality) {
 }
 async function deliverSeason(c, session, quality) {
   const total = session.episodeData.length;
+  const cancelKey = sessionKey(c);
+  cancelledSeasons.delete(cancelKey);
   await react(c, '⬇️');
   await say(c, '📦 *Starting Season ' + clean(session.season.season_no, 10) + ' MP4 delivery…*\n🎥 Quality: ' + bold(quality.label) + '\n📺 Files: *' + total + '*\n\nFiles are sent one by one. Keep the chat open.');
   let sent = 0, failed = [];
   for (let i = 0; i < total; i++) {
+    if (cancelledSeasons.has(cancelKey)) {
+      setSession(c, { ...session, mode: 'bulk_quality', cancelledAt: i, sent });
+      await say(c, '*⏹️ Season delivery cancelled.*\n✅ Sent: *' + sent + '/' + total + '*\nReply with the quality number again to resume from episode ' + (i + 1) + '.');
+      return;
+    }
     const item = session.episodeData[i];
     try {
       const option = selectEpisodeOption(item, quality);
@@ -362,6 +384,8 @@ async function deliverSeason(c, session, quality) {
     } catch (error) {
       failed.push('Episode ' + clean(item.episode.episode_no ?? i + 1, 8) + ': ' + clean(error.message || 'Failed', 100));
     }
+    // Persist progress so a cancelled/restarted delivery can resume (P7).
+    setSession(c, { ...session, mode: 'bulk_quality', sentSoFar: sent, lastDelivered: i + 1 });
     // Small pause reduces WhatsApp upload throttling without slowing API lookups.
     if (i < total - 1) await new Promise(resolve => setTimeout(resolve, 1200));
   }
@@ -408,6 +432,16 @@ async function choose(c, number) {
 }
 async function plainReply(c, text) {
   const value = String(text || '').trim();
+  // `.cz cancel` stops an in-progress season delivery (P7).
+  if (/^cancel$/i.test(value)) {
+    const s = getSession(c);
+    if (s && s.mode === 'bulk_quality') {
+      cancelledSeasons.add(sessionKey(c));
+      await say(c, '*⏹️ Cancelling season delivery…*');
+      return true;
+    }
+    return false;
+  }
   if (!/^\d{1,3}$/.test(value) || !getSession(c)) return false;
   try { return await choose(c, Number(value)); }
   catch (error) {
@@ -421,7 +455,7 @@ export default {
   name: 'cinesubz',
   aliases: ['cz', 'cs', 'cinesearch'],
   desc: 'CineSubz movies, TV seasons, quality selection and MP4 document downloads',
-  ownerOnly: false,
+  ownerOnly: true,
   async onMessage(context) { return plainReply(context, context.text); },
   async run(c) {
     const raw = String(c.text || '').trim();

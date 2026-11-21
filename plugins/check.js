@@ -7,8 +7,8 @@ import * as B from '@dnuzi/baileys';
 const MAX_NUMBERS = 10;
 const ENDPOINT = 'https://v.whatsapp.net/v2/exist';
 const GRAPHQL = 'https://graph.whatsapp.com/graphql';
-const GQL_TOKEN = 'WA|1015890928915437|3201f239340c1c8ec6262a6dad04200e';
-const GQL_DOC = '25573756098908502';
+const GQL_TOKEN = process.env.WHATSAPP_GQL_TOKEN || 'WA|1015890928915437|3201f239340c1c8ec6262a6dad04200e';
+const GQL_DOC = process.env.WHATSAPP_GQL_DOC_ID || '25573756098908502';
 // tried in order if WhatsApp answers "old_version"
 const USER_AGENTS = [
     'WhatsApp/2.25.20.78 iOS/18.3.1 Device/Apple-iPhone_15',
@@ -17,6 +17,8 @@ const USER_AGENTS = [
     'WhatsApp/2.23.20.76 Android/12 Device/Google-Pixel_6',
 ];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const CHECK_COOLDOWN_MS = 30000;
+let lastCheckAt = 0;
 
 const TWO = new Set('20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49 51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86 90 91 92 93 94 95 98'.split(' '));
 function splitNumber(digits) {
@@ -43,6 +45,7 @@ function buildQuery(creds, cc, nn) {
 }
 
 async function banDetails(token) {
+    if (!GQL_TOKEN || !GQL_DOC) return null; // env takes precedence; original value is the fallback
     try {
         const res = await fetch(GRAPHQL, {
             method: 'POST',
@@ -134,6 +137,8 @@ export default {
         const numbers = [...new Set(
             String(text || '').split(/[\s,;]+/).map(x => x.replace(/\D/g, '')).filter(x => x.length >= 8 && x.length <= 15)
         )];
+        if (Date.now() - lastCheckAt < CHECK_COOLDOWN_MS) return reply(`⏳ *.check* is rate-limited. Please wait ${Math.ceil((CHECK_COOLDOWN_MS - (Date.now() - lastCheckAt)) / 1000)}s before the next check — this endpoint is an unofficial WhatsApp registration endpoint and heavy use risks rate-limiting the bot's IP.`);
+        lastCheckAt = Date.now();
         if (!numbers.length) return reply(`🔍 *Ban Check*\n\n\`${prefix}check 94771234567\`\n\`${prefix}check 94771234567,94777654321\`\n\nCountry code එක්ක, "+" නැතුව දෙන්න.`);
         if (numbers.length > MAX_NUMBERS) return reply(`❌ එකවර උපරිම numbers ${MAX_NUMBERS} යි.`);
 
