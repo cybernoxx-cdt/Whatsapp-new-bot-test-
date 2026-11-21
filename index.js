@@ -152,7 +152,7 @@ const MENU_TEXT = () => [
     `▫️ \`${prefix}c-ping\` — Check call system speed`,
     '',
     `> ✦ ${config.botName}`,
-].join('\\n');
+].join('\n');
 
 const STATUS_TEXT = () =>
 `📞 *Auto Call:* ${statusIcon()}
