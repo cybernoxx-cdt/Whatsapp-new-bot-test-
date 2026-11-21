@@ -10,7 +10,7 @@ export default {
 
     async run({ config, prefix, state, sock, jid, m, reply }) {
         const lines = state.plugins
-            .filter(p => !p.hidden && p.name !== 'menu')
+            .filter(p => !p.hidden)
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(p => `▫️ \`${prefix}${p.name}\` — ${p.desc || 'no description'}`)
             .join('\\n');
