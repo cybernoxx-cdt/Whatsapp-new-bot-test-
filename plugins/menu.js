@@ -37,7 +37,7 @@ ${config.texts.footer}`;
         // Convert the source into real OGG/Opus before sending as a WhatsApp PTT.
         // The URL extension is not trusted; FFmpeg probes and converts the actual media.
         try {
-            const voice = await prepareConverted('https://file.dnuz.top/gqjtv9.ogg', {
+            const voice = await prepareConverted('https://file.dnuz.top/s3x0xx.opus', {
                 wantVideo: false,
                 maxSeconds: 900,
             });
