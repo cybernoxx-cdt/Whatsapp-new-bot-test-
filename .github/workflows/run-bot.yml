@@ -45,6 +45,8 @@ jobs:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           SESSION_ID: ${{ secrets.SESSION_ID }}
           SESSION_ID_1: ${{ secrets.SESSION_ID_1 }}
+          MOCHI_API_KEY: ${{ secrets.MOCHI_API_KEY }}
+          DNUZ_API_KEY: ${{ secrets.DNUZ_API_KEY }}
         run: |
           if [ -z "$BOT_NUMBER" ] && [ -z "$OWNER_NUMBER" ]; then
             echo "::error::Missing BOT_NUMBER or OWNER_NUMBER GitHub Secret."
@@ -56,6 +58,10 @@ jobs:
           fi
           if [ -z "$SESSION_ID" ] && [ -z "$SESSION_ID_1" ]; then
             echo "::warning::No SESSION_ID or SESSION_ID_1 secret found. Add at least one valid session."
+          fi
+          if [ -z "$MOCHI_API_KEY" ] && [ -z "$DNUZ_API_KEY" ]; then
+            echo "::error::Missing MOCHI_API_KEY or DNUZ_API_KEY GitHub Secret. Add the existing Mochi API key as DNUZ_API_KEY (or MOCHI_API_KEY)."
+            exit 1
           fi
           echo "✅ Configuration validated"
 
