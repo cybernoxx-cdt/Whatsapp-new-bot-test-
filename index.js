@@ -133,31 +133,26 @@ cleanCache();
 // ================= MESSAGE STYLES =================
 const statusIcon = () => (CALL_ON ? '🟢 *ON*' : '🔴 *OFF*');
 
-const MENU_TEXT = () =>
-[
-    `╭━━〔 📞 ${config.botName} CALL MENU 〕━━╮`,
-    '│',
-    `│  Auto Call : ${statusIcon()}`,
-    '│',
-    '├──〔 AUTO ANSWER 〕',
-    `│  ◦ ${prefix}call on  — Enable auto call`,
-    `│  ◦ ${prefix}call off — Disable auto call`,
-    `│  ◦ ${prefix}call    — Check status`,
-    '│',
-    '├──〔 OUTGOING CALLS · OWNER 〕',
-    `│  ◦ ${prefix}vcall 94771234567 — Video call`,
-    `│  ◦ ${prefix}acall 94771234567 — Audio call`,
-    `│  ◦ ${prefix}acall 9477...,9476... — Multiple calls`,
-    '│',
-    '├──〔 SETTINGS 〕',
-    `│  ◦ ${prefix}mode self|inbox|group|both`,
-    `│  ◦ ${prefix}tourl — Save replied media URL`,
-    `│  ◦ ${prefix}c-ping — Check call system speed`,
-    '│',
-    '╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯',
+const MENU_TEXT = () => [
+    `📞 *${config.botName} — Call Menu*`,
     '',
-    texts.footer,
-].join('\n');
+    '*📡 Auto call*',
+    `▫️ \`${prefix}call on\` — Enable auto call`,
+    `▫️ \`${prefix}call off\` — Disable auto call`,
+    `▫️ \`${prefix}call\` — Check status (${CALL_ON ? '🟢 ON' : '🔴 OFF'})`,
+    '',
+    '*📲 Outgoing calls · Owner*',
+    `▫️ \`${prefix}vcall 94771234567\` — Video call`,
+    `▫️ \`${prefix}acall 94771234567\` — Audio call`,
+    `▫️ \`${prefix}acall 9477...,9476...\` — Multiple calls`,
+    '',
+    '*⚙️ Settings*',
+    `▫️ \`${prefix}mode self|inbox|group|both\``,
+    `▫️ \`${prefix}tourl\` — Save replied media URL`,
+    `▫️ \`${prefix}c-ping\` — Check call system speed`,
+    '',
+    `> ✦ ${config.botName}`,
+].join('\\n');
 
 const STATUS_TEXT = () =>
 `📞 *Auto Call:* ${statusIcon()}
