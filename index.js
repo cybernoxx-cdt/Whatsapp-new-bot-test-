@@ -157,7 +157,7 @@ const MENU_TEXT = () =>
     '╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯',
     '',
     texts.footer,
-].join('\\n');
+].join('\n');
 
 const STATUS_TEXT = () =>
 `📞 *Auto Call:* ${statusIcon()}
