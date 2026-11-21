@@ -5,7 +5,7 @@
 // ============================================================
 
 const API_URL = 'https://mochi-apis.koyeb.app/api/search/pinterest';
-const API_KEY = process.env.PINTEREST_API_KEY || '';
+const API_KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env.PINTEREST_API_KEY || '';
 
 function cleanText(value, max = 180) {
     return String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -32,7 +32,7 @@ export default {
             return reply('🖼️ *Pinterest Image Search*\n\nUsage: .pinterest anime wallpaper\n\n> Up to 15 images will be sent together as a WhatsApp album.');
         }
         if (!API_KEY) {
-            return reply('❌ Pinterest API key එක configure කරලා නැහැ. GitHub Secrets වල PINTEREST_API_KEY add කරන්න.');
+            return reply('❌ MOCHI_API_KEY GitHub Secret එක configure කරලා නැහැ.');
         }
 
         const status = await reply('🔎 Pinterest images සොයනවා...\n> ' + query);
