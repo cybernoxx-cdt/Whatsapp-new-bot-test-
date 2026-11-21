@@ -151,8 +151,7 @@ function imageFrom(objects) {
 function validImage(value) {
   try {
     const u = new URL(String(value || ''));
-    return u.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(u.hostname) &&
-      /\.(?:jpe?g|png|webp|gif)(?:$|[?#])/i.test(u.pathname + u.search);
+    return u.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(u.hostname) && !/\.(?:mp4|mkv|mp3|zip|pdf)(?:$|[?#])/i.test(u.pathname + u.search);
   } catch { return false; }
 }
 async function pagePoster(pageUrl) {
