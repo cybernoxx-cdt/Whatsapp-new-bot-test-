@@ -87,6 +87,7 @@ jobs:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           DNUZ_API_KEY: ${{ secrets.DNUZ_API_KEY }}
           PINTEREST_API_KEY: ${{ secrets.PINTEREST_API_KEY }}
+          CINESUBZ_API_KEY: ${{ secrets.CINESUBZ_API_KEY }}
           DNUZ_API_BASE: ${{ secrets.DNUZ_API_BASE }}
           DEFAULT_AUDIO_URL: ${{ secrets.DEFAULT_AUDIO_URL }}
           DEFAULT_VIDEO_URL: ${{ secrets.DEFAULT_VIDEO_URL }}
