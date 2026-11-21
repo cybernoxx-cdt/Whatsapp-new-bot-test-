@@ -111,21 +111,136 @@ async function search(c, query, filter = 'all') {
   setSession(c, { mode: 'search', items });
   return say(c, formatSearch(data.query || query, movies, tvs));
 }
+
+function firstValue(objects, keys) {
+  for (const object of objects) {
+    if (!object || typeof object !== 'object') continue;
+    for (const key of keys) {
+      const value = object[key];
+      if (value != null && value !== '' && !(Array.isArray(value) && !value.length)) return value;
+    }
+  }
+  return '';
+}
+function imageFrom(objects) {
+  const keys = /^(poster|poster_url|posterUrl|image|image_url|imageUrl|thumbnail|thumbnail_url|thumbnailUrl|cover|cover_url|coverUrl|backdrop|backdrop_url|backdropUrl|thumb|img|banner)$/i;
+  const seen = new Set();
+  const walk = (value, depth = 0) => {
+    if (!value || typeof value !== 'object' || depth > 4 || seen.has(value)) return '';
+    seen.add(value);
+    for (const [key, child] of Object.entries(value)) {
+      if (keys.test(key)) {
+        const candidate = typeof child === 'string' ? child : (child?.url || child?.src || '');
+        if (validImage(candidate)) return candidate;
+      }
+    }
+    for (const child of Object.values(value)) {
+      if (child && typeof child === 'object') {
+        const found = walk(child, depth + 1);
+        if (found) return found;
+      }
+    }
+    return '';
+  };
+  for (const object of objects) {
+    const found = walk(object);
+    if (found) return found;
+  }
+  return '';
+}
+function validImage(value) {
+  try {
+    const u = new URL(String(value || ''));
+    return u.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(u.hostname) &&
+      /\.(?:jpe?g|png|webp|gif)(?:$|[?#])/i.test(u.pathname + u.search);
+  } catch { return false; }
+}
+async function pagePoster(pageUrl) {
+  if (!validPage(pageUrl)) return '';
+  try {
+    const response = await fetch(pageUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GOD-VOIP-MD/1.0)', Accept: 'text/html' },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) return '';
+    const html = (await response.text()).slice(0, 500000);
+    const patterns = [
+      /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+      /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i
+    ];
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (match && validImage(match[1])) return match[1];
+    }
+  } catch {}
+  return '';
+}
+function detailText(data, item, kind) {
+  const sources = [data, data?.details, data?.movie, data?.tvshow, data?.series, item];
+  const title = clean(firstValue(sources, ['title', 'name', 'original_title']) || item?.title || (kind === 'tv' ? 'TV Series' : 'Movie'), 160);
+  const year = firstValue(sources, ['year', 'release_year', 'releaseDate', 'release_date', 'first_air_date']);
+  const rating = firstValue(sources, ['rating', 'imdb_rating', 'imdbRating', 'vote_average', 'imdb']);
+  const genre = firstValue(sources, ['genres', 'genre', 'categories']);
+  const description = firstValue(sources, ['description', 'overview', 'plot', 'synopsis', 'story']);
+  const runtime = firstValue(sources, ['runtime', 'duration', 'time']);
+  const status = firstValue(sources, ['status']);
+  const seasons = firstValue(sources, ['total_seasons', 'season_count']);
+  const genreText = Array.isArray(genre) ? genre.map(x => typeof x === 'object' ? x.name : x).join(', ') : genre;
+  const lines = [kind === 'tv' ? '*📺 TV SERIES DETAILS*' : '*🎬 MOVIE DETAILS*', '', '*' + title + '*'];
+  if (year) lines.push('📅 *Year:* ' + clean(year, 40));
+  if (rating) lines.push('⭐ *Rating:* ' + clean(rating, 40));
+  if (genreText) lines.push('🎭 *Genre:* ' + clean(genreText, 160));
+  if (runtime) lines.push('⏱️ *Runtime:* ' + clean(runtime, 50));
+  if (status) lines.push('📌 *Status:* ' + clean(status, 50));
+  if (seasons || (kind === 'tv' && Array.isArray(data?.seasons))) lines.push('📚 *Seasons:* ' + clean(seasons || data.seasons.length, 20));
+  if (description) lines.push('', '📝 *Overview:*', clean(description, 650));
+  lines.push('', '*✦ GOD VOIP MD*');
+  return lines.join('\n');
+}
+async function sendInfoCard(c, data, item, kind) {
+  const sources = [data, data?.details, data?.movie, data?.tvshow, data?.series, item];
+  const caption = detailText(data, item, kind);
+  const imageUrl = imageFrom(sources) || await pagePoster(item?.url);
+  if (imageUrl) {
+    try {
+      await c.sock.sendMessage(c.jid, { image: { url: imageUrl }, caption }, { quoted: c.m });
+      return true;
+    } catch (error) {
+      console.error('[CINESUBZ POSTER]', error?.message || error);
+    }
+  }
+  await say(c, caption + '\n\n🖼️ *Poster image is not available from the source.*');
+  return false;
+}
+
 async function openMovie(c, item) {
   const data = await api('info', { url: item.url });
-  const links = data.downloadLinks || [];
+  const links = data.downloadLinks || data.download_links || data.dl_links || [];
   setSession(c, { mode: 'movie', title: data.title || item.title, links });
-  const lines = ['*╭━━〔 🎬 MOVIE DETAILS 〕━━╮*', '', bold(data.title || item.title), '📅 *Year:* ' + bold(data.year || 'N/A'), '⭐ *Rating:* ' + bold(data.rating || data.imdbId || 'N/A')];
-  if (data.description) lines.push('', bold(clean(data.description, 700)));
-  if (links.length) lines.push('', '*⬇️ DOWNLOAD QUALITIES*', numbered(links.slice(0, 10), qualityLabel), '', '↪️ Reply with a quality number');
-  else lines.push('', '❌ No download qualities found.');
-  return say(c, lines.join('\n'));
+  await sendInfoCard(c, data, item, 'movie');
+  if (links.length) {
+    const lines = ['*⬇️ MOVIE DOWNLOAD QUALITIES*', numbered(links.slice(0, 10), qualityLabel), '', '↪️ Reply with a quality number'];
+    return say(c, lines.join('\n'));
+  }
+  return say(c, '*❌ No download qualities found for this movie.*');
 }
 async function openTv(c, item) {
-  const data = await api('tv', { url: item.url });
-  const menu = makeTvMenu(data);
-  if (!menu.choices.length) return say(c, '*❌ No valid seasons or episodes found.*');
-  setSession(c, { mode: 'tv', seasons: menu.seasons, choices: menu.choices, title: data.title || item.title });
+  const [tvResult, infoResult] = await Promise.allSettled([
+    api('tv', { url: item.url }),
+    api('info', { url: item.url })
+  ]);
+  if (tvResult.status !== 'fulfilled') throw tvResult.reason;
+  const data = tvResult.value || {};
+  const info = infoResult.status === 'fulfilled' ? infoResult.value || {} : {};
+  const merged = { ...info, ...data, title: data.title || info.title || item.title };
+  const menu = makeTvMenu(merged);
+  if (!menu.choices.length) {
+    await sendInfoCard(c, merged, item, 'tv');
+    return say(c, '*❌ No valid seasons or episodes found.*');
+  }
+  setSession(c, { mode: 'tv', seasons: menu.seasons, choices: menu.choices, title: merged.title });
+  await sendInfoCard(c, merged, item, 'tv');
   return say(c, menu.text);
 }
 async function getEpisodeOptions(episode) {
