@@ -1171,7 +1171,7 @@ async function handleCommand(sock, m) {
         call: '📞', vcall: '📹', acall: '🎧', 'c-ping': '🏓', ping: '🏓', speed: '🏓',
         mode: '⚙️', self: '🔒', public: '🌐', cz: '🎬', cinesubz: '🎬',
         vv: '👁️', viewonce: '👁️', retrieve: '📥', tourl: '🔗',
-        jid: '🆔', check: '🔍', fulldp: '🖼️', pinterest: '📌',
+        jid: '🆔', check: '🔍', setpp: '🖼️', fulldp: '🖼️', pinterest: '📌',
         privacy: '🛡️', runtime: '⏱️', owner: '👑', 'media-packs': '📦',
     };
     const reactionEmoji = commandReactions[name] || (plugin?.category === 'download' ? '📥' : '⚡');
