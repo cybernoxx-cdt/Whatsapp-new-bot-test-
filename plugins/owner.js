@@ -4,7 +4,7 @@ export default {
     name: 'owner',
     aliases: ['creator'],
     desc: 'Send owner contact',
-    ownerOnly: false,
+    ownerOnly: true,
 
     async run({ sock, jid, m, config }) {
         const number = String(config.number).replace(/[^0-9]/g, '');

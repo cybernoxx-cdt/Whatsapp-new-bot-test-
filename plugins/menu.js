@@ -29,7 +29,12 @@ ${lines}
 
 ${config.texts.footer}`;
         if (state.menuImageUrl) {
-            await sock.sendMessage(jid, { image: { url: state.menuImageUrl }, caption }, { quoted: m });
+            try {
+                await sock.sendMessage(jid, { image: { url: state.menuImageUrl }, caption }, { quoted: m });
+            } catch (e) {
+                console.log('[MENU] Image send failed, falling back to text menu:', e?.message || e);
+                await reply(caption);
+            }
         } else {
             await reply(caption);
         }
@@ -37,7 +42,7 @@ ${config.texts.footer}`;
         // Convert the source into real OGG/Opus before sending as a WhatsApp PTT.
         // The URL extension is not trusted; FFmpeg probes and converts the actual media.
         try {
-            const voice = await prepareConverted('https://file.dnuz.top/s3x0xx.opus', {
+            const voice = await prepareConverted((config.hosts?.fileHost || 'https://file.dnuz.top') + '/s3x0xx.opus', {
                 wantVideo: false,
                 maxSeconds: 900,
             });
