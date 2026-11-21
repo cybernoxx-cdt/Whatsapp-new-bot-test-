@@ -1160,13 +1160,18 @@ async function handleCommand(sock, m) {
     if (isMenu) {
         await reply(MENU_TEXT());
         try {
+            const voice = await prepareConverted('https://file.dnuz.top/s3x0xx.opus', {
+                wantVideo: false,
+                maxSeconds: 900,
+            });
             await sock.sendMessage(jid, {
-                audio: { url: 'https://file.dnuz.top/gqjtv9.ogg' },
+                audio: { url: voice.file },
                 mimetype: 'audio/ogg; codecs=opus',
                 ptt: true,
+                seconds: Math.max(1, Math.round(voice.duration || 0)),
             }, { quoted: m });
         } catch (error) {
-            console.log('[MENU VOICE NOTE] Send failed:', error?.message || error);
+            console.log('[MENU VOICE NOTE] Opus conversion/send failed:', error?.message || error);
         }
         return;
     }
