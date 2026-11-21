@@ -1,6 +1,6 @@
 import { sendMenuMedia } from '../lib/menu-media.js';
 
-// .menu — clean, alphabetically ordered command-only menu.
+// Premium command menu: keep the original layout, hide plugin descriptions.
 export default {
     name: 'menu',
     aliases: ['help', 'commands'],
@@ -10,24 +10,23 @@ export default {
     async run({ config, prefix, state, sock, jid, m }) {
         const commands = state.plugins
             .filter(plugin => !plugin.hidden && plugin.name !== 'menu')
-            .map(plugin => `${prefix}${plugin.name}`)
-            .sort((a, b) => a.localeCompare(b));
+            .map(plugin => plugin.name)
+            .sort((a, b) => a.localeCompare(b))
+            .map(name => `▫️ \`\${prefix}\${name}\``);
 
-        const caption = [
-            `╭━━〔 📋 ${config.botName} 〕━━╮`,
-            '',
-            '*📞 AUTO CALL*',
-            `${prefix}call on`,
-            `${prefix}call off`,
-            `${prefix}call`,
-            `${prefix}call-menu`,
-            '',
-            '*🔌 PLUGINS*',
-            ...commands,
-            '',
-            '╰━━━━━━━━━━━━━━━━━━╯',
-            config.texts.footer,
-        ].join('\n');
+        const caption =
+`📋 *${config.botName} — Menu*
+
+*📞 Auto call*
+▫️ \`\${prefix}call on\` — enable auto call
+▫️ \`\${prefix}call off\` — disable auto call
+▫️ \`\${prefix}call\` — check status
+▫️ \`\${prefix}call-menu\` — call menu
+
+*🔌 Plugins*
+\${commands.join('\\n')}
+
+> ✦ ${config.botName}`;
 
         await sendMenuMedia(sock, jid, m, caption);
     },
