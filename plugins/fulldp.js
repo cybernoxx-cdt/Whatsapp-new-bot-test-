@@ -11,28 +11,6 @@ const downloadContentFromMessage =
 
 const BOT_NAME = '𝗚𝖮𝖣 𝗩𝖮𝖨𝖯 𝗠𝖣';
 
-const fakeVcardQuote = {
-    key: {
-        remoteJid: 'status@broadcast',
-        participant: '13135550002@s.whatsapp.net',
-        fromMe: false,
-        id: 'META_SETPP',
-    },
-    message: {
-        contactMessage: {
-            displayName: BOT_NAME,
-            vcard: `BEGIN:VCARD
-VERSION:3.0
-N:;${BOT_NAME};;;
-FN:${BOT_NAME}
-ORG:${BOT_NAME}
-TITLE:
-item1.TEL;waid=13135550002:+13135550002
-item1.X-ABLabel:Mobile
-END:VCARD`,
-        },
-    },
-};
 
 export default {
     name: 'setpp',
@@ -46,7 +24,7 @@ export default {
             if (!isOwner && !m.key?.fromMe) {
                 return await sock.sendMessage(jid, {
                     text: '🔒 මේ command එක owner ට විතරයි.',
-                }, { quoted: fakeVcardQuote });
+                }, { quoted: m });
             }
 
             if (typeof downloadContentFromMessage !== 'function') {
@@ -58,7 +36,7 @@ export default {
             if (!imageMessage) {
                 return await sock.sendMessage(jid, {
                     text: '❌ *Reply to an image!*\n\n> Reply to an image with ' + prefix + 'setpp',
-                }, { quoted: fakeVcardQuote });
+                }, { quoted: m });
             }
 
             await sock.sendMessage(jid, { react: { text: '⏳', key: m.key } });
@@ -101,7 +79,7 @@ export default {
                     '🎨 *BG:* rgb(' + rgb.join(', ') + ')\n\n' +
                     '> _Full image displayed without cropping_\n' +
                     '> © ' + BOT_NAME,
-            }, { quoted: fakeVcardQuote });
+            }, { quoted: m });
 
             await sock.sendMessage(jid, { react: { text: '✅', key: m.key } });
         } catch (err) {

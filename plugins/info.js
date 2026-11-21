@@ -7,12 +7,16 @@ export default {
     name: 'info',
     aliases: ['botinfo', 'status'],
     desc: 'Show bot & server information',
-    ownerOnly: false,
+    ownerOnly: false, // public, but the server section is owner-only (see below) // public, but the server section is owner-only (see below) // public, but the server section is owner-only (see below)
 
-    async run({ reply, config, prefix, state }) {
+    async run({ reply, config, prefix, state, isOwner }) {
         const mem = process.memoryUsage();
         const cpu = os.cpus()?.[0]?.model?.trim() || 'unknown';
 
+        // Server details are owner-only: strangers get the bot section only (S11).
+        const serverSection = isOwner
+            ? `\n*🖥️ Server*\n▫️ Uptime: ${formatUptime(process.uptime())}\n▫️ Platform: ${os.platform()} (${os.arch()})\n▫️ Node.js: ${process.version}\n▫️ CPU: ${cpu}\n▫️ RAM (bot): ${formatBytes(mem.rss)}\n▫️ RAM (system): ${formatBytes(os.totalmem() - os.freemem())} / ${formatBytes(os.totalmem())}\n`
+            : '';
         const text =
 `ℹ️ *${config.botName} — Info*
 
@@ -22,22 +26,14 @@ export default {
 ▫️ Owner: ${config.ownerName}
 ▫️ Prefix: \`${prefix}\`
 ▫️ Plugins: ${state.pluginCount}
-▫️ Login mode: ${config.connectMode.toUpperCase()}
+▫️ Login mode: ${String(config.connectMode || 'pair').toUpperCase()}
 
 *📞 Call system*
 ▫️ Auto Call: ${state.callOn ? '🟢 ON' : '🔴 OFF'}
 ▫️ Max concurrent calls: ${config.voip.maxConcurrentCalls}
 ▫️ Database: ${state.dbConnected ? '🟢 Connected' : '🔴 Disconnected'}
-
-*🖥️ Server*
-▫️ Uptime: ${formatUptime(process.uptime())}
-▫️ Platform: ${os.platform()} (${os.arch()})
-▫️ Node.js: ${process.version}
-▫️ CPU: ${cpu}
-▫️ RAM (bot): ${formatBytes(mem.rss)}
-▫️ RAM (system): ${formatBytes(os.totalmem() - os.freemem())} / ${formatBytes(os.totalmem())}
-
-🔗 ${config.repoUrl}
+${serverSection}
+🔗 ${config.repoUrl || ''}
 
 ${config.texts.footer}`;
         await reply(text);
