@@ -8,29 +8,41 @@ import crypto from 'node:crypto';
 
 const MAX_SESSIONS = Math.max(1, Math.min(10, Number(process.env.MAX_SESSIONS || 10)));
 const baseNumber = process.env.BOT_NUMBER || process.env.OWNER_NUMBER || '94707085822';
+if (!baseNumber) { console.error('❌ BOT_NUMBER (or OWNER_NUMBER) is not set. Set it as a GitHub Secret if you want to override the default.'); process.exit(1); }
 const baseKey = process.env.SESSION_KEY || 'god-voip-md';
 const sessions = [];
 const seenSessionFingerprints = new Map();
 
-for (let i = 1; i <= MAX_SESSIONS; i++) {
-    // SESSION_ID is always the primary account. SESSION_ID_1 is the first
-    // additional account, SESSION_ID_2 the next, and so on. Do not let
-    // SESSION_ID_1 silently shadow the primary SESSION_ID.
-    const raw = i === 1
-        ? (process.env.SESSION_ID || '')
-        : (process.env[`SESSION_ID_${i - 1}`] || '');
+// Explicit slot mapping (C4): slot i uses SESSION_ID_i and BOT_NUMBER_i,
+// except slot 1 which also accepts the legacy SESSION_ID / BOT_NUMBER.
+// Previously the loop read SESSION_ID_{i-1} for slot i, so SESSION_ID_10
+// was never read and slot 2 paired SESSION_ID_1 with BOT_NUMBER_2.
+const SLOT_DEFS = Array.from({ length: 10 }, (_, k) => {
+    const i = k + 1;
+    return {
+        index: i,
+        sessionEnv: i === 1 ? 'SESSION_ID_1' : `SESSION_ID_${i}`,
+        legacySessionEnv: i === 1 ? 'SESSION_ID' : null,
+        numberEnv: i === 1 ? 'BOT_NUMBER_1' : `BOT_NUMBER_${i}`,
+        legacyNumberEnv: i === 1 ? 'BOT_NUMBER' : null,
+    };
+});
+for (const slot of SLOT_DEFS.slice(0, MAX_SESSIONS)) {
+    const i = slot.index;
+    const raw = (process.env[slot.sessionEnv] || (slot.legacySessionEnv ? process.env[slot.legacySessionEnv] : '') || '');
     if (!String(raw || '').trim()) continue;
     const normalized = String(raw).normalize('NFKC').trim();
     const fingerprint = crypto.createHash('sha256').update(normalized).digest('hex');
     if (seenSessionFingerprints.has(fingerprint)) {
-        console.error(`❌ [Session ${i}] Duplicate session export detected (same as SESSION_ID_${seenSessionFingerprints.get(fingerprint)}). Each slot must contain a different WhatsApp account's own session export; duplicate credentials can cause decrypt/connection conflicts.`);
+        const dupSlot = seenSessionFingerprints.get(fingerprint);
+        console.error(`❌ [Session ${i}] Duplicate session export detected (same as ${dupSlot === 1 ? 'SESSION_ID_1 / SESSION_ID' : 'SESSION_ID_' + dupSlot}). Each slot must contain a different WhatsApp account's own session export; duplicate credentials can cause decrypt/connection conflicts.`);
         continue;
     }
     seenSessionFingerprints.set(fingerprint, i);
     sessions.push({
         index: i,
         raw: normalized,
-        number: process.env[`BOT_NUMBER_${i}`] || baseNumber,
+        number: process.env[slot.numberEnv] || (slot.legacyNumberEnv ? process.env[slot.legacyNumberEnv] : '') || baseNumber,
     });
 }
 
@@ -117,7 +129,7 @@ function launch(session) {
         if (authBlocked) {
             status.set(session.index, 'logged_out');
             terminalReason.set(session.index, authReason);
-            logSession(session.index, '⛔ Restart disabled: ' + authReason + '. Replace SESSION_ID_' + session.index + ' with a freshly linked session export.');
+            logSession(session.index, '⛔ Restart disabled: ' + authReason + '. Replace ' + (session.index === 1 ? 'SESSION_ID_1 / SESSION_ID' : 'SESSION_ID_' + session.index) + ' with a freshly linked session export.');
             return;
         }
         const uptime = Date.now() - (startedAt.get(session.index) || Date.now());
