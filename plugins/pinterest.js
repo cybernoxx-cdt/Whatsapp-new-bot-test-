@@ -24,7 +24,7 @@ export default {
     name: 'pinterest',
     aliases: ['pin', 'pins', 'pinsearch'],
     desc: 'Search Pinterest and send up to 15 images as one album',
-    ownerOnly: false,
+    ownerOnly: true,
 
     async run({ sock, jid, m, text, reply }) {
         const query = cleanText(text, 120);
@@ -40,11 +40,10 @@ export default {
             const endpoint = new URL(API_URL);
             endpoint.searchParams.set('q', query);
             endpoint.searchParams.set('limit', '15');
-            endpoint.searchParams.set('api_key', API_KEY);
 
             const response = await fetch(endpoint, {
                 method: 'GET',
-                headers: { Accept: 'application/json', 'User-Agent': 'GOD-VOIP-MD/1.0' },
+                headers: { Accept: 'application/json', 'User-Agent': 'GOD-VOIP-MD/1.0', Authorization: 'Bearer ' + API_KEY },
                 signal: AbortSignal.timeout(45000),
             });
             const payload = await response.json().catch(() => null);

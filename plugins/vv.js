@@ -2,23 +2,8 @@ import { downloadContentFromMessage, downloadMediaMessage } from '@dnuzi/baileys
 import pino from 'pino';
 
 const logger = pino({ level: 'silent' });
-// Own message cache: WhatsApp removes url/mediaKey/directPath from QUOTED media,
-// so the ORIGINAL message (seen while the bot was online) is needed to download it.
-const LOCAL_CACHE = new Map();
-const hooked = new WeakSet();
-function hook(sock) {
-  if (!sock?.ev || hooked.has(sock)) return;
-  hooked.add(sock);
-  sock.ev.on('messages.upsert', ({ messages }) => {
-    for (const msg of messages || []) {
-      const id = msg?.key?.id;
-      if (!id || !msg.message) continue;
-      LOCAL_CACHE.delete(id);
-      LOCAL_CACHE.set(id, msg);
-      if (LOCAL_CACHE.size > 1500) LOCAL_CACHE.delete(LOCAL_CACHE.keys().next().value);
-    }
-  });
-}
+// Message cache lives in index.js (MSG_CACHE) and is passed in as
+// getCachedMessage — do not keep a second copy here (P6).
 
 const MEDIA_TYPES = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'];
 
@@ -111,13 +96,12 @@ export default {
   desc: 'Re-send quoted media that the account is allowed to access',
   ownerOnly: true,
   async run({ sock, jid, m, reply, getCachedMessage }) {
-    hook(sock);
     const context = getContext(m.message);
     if (!context?.quotedMessage) return reply('Media message එකකට reply කරලා .vv යවන්න.');
 
     // Do not attempt to bypass View Once protections.
     // Prefer the ORIGINAL message the bot cached (quoted copies have no media path).
-    const cached = getCachedMessage?.(context.stanzaId) || LOCAL_CACHE.get(context.stanzaId);
+    const cached = getCachedMessage?.(context.stanzaId);
     const quoted = cached?.message || context.quotedMessage;
     if (!cached) {
       const q = findMedia(context.quotedMessage);
