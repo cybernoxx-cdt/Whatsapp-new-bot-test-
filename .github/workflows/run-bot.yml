@@ -8,7 +8,7 @@ on:
 # Prevent two runners from using the same WhatsApp session simultaneously.
 concurrency:
   group: whatsapp-bot-main
-  cancel-in-progress: false  # never kill a running bot to start a new one (P8)
+  cancel-in-progress: true  # replace the previous bot runner on every new push
 
 permissions:
   contents: read
