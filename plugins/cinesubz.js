@@ -1,27 +1,253 @@
-// CineSubz v3 — plain-number reply router + grouped search results
-const BASE='https://mochi-apis.koyeb.app/api/movie/cinesubz';
-const KEY=process.env.MOCHI_API_KEY||process.env.DNUZ_API_KEY||process.env.CINESUBZ_API_KEY||'';
-const sessions=new Map(),TTL=30*60*1000;
-const clean=(v,n=180)=>String(v??'').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&#8217;|&#039;/g,"'").replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,n);
-const b=v=>'*'+clean(v,450)+'*';
-const valid=v=>{try{const u=new URL(String(v||''));return u.protocol==='https:'&&(u.hostname==='cinesubz.net'||u.hostname.endsWith('.cinesubz.net'));}catch{return false;}};
-const sk=c=>String(c.jid)+'|'+String(c.m?.key?.participantAlt||c.m?.key?.participant||c.m?.key?.remoteJidAlt||c.jid);
-function get(c){const k=sk(c),s=sessions.get(k);if(!s||Date.now()-s.at>TTL){sessions.delete(k);return null;}s.at=Date.now();return s;}
-function set(c,s){sessions.set(sk(c),{...s,at:Date.now()});if(sessions.size>1000)for(const [k] of [...sessions].sort((a,b)=>a[1].at-b[1].at).slice(0,200))sessions.delete(k);}
-async function api(ep,params={}){if(!KEY)throw Error('MOCHI_API_KEY secret එක hosting environment එකේ configure කරලා නැහැ.');const u=new URL(BASE+'/'+ep);for(const [k,v]of Object.entries(params))if(v!=null&&v!=='')u.searchParams.set(k,String(v));u.searchParams.set('api_key',KEY);const r=await fetch(u,{headers:{Accept:'application/json','User-Agent':'GOD-VOIP-MD-CineSubz/3.0'},signal:AbortSignal.timeout(40000)});const j=await r.json().catch(()=>null);if(!r.ok||!j||j.success===false||j.status===false)throw Error(clean(j?.message||j?.error||'API HTTP '+r.status));return j;}
-async function say(c,t){return c.reply(t);}
-async function react(c){try{await c.sock.sendMessage(c.jid,{react:{text:'🎬',key:c.m.key}});}catch{}}
-const list=(a,fn,max=20,start=0)=>a.slice(0,max).map((x,i)=>'*'+(i+1+start)+'.* '+fn(x)).join('\n');
-function resultsText(q,movies,tvs){const a=['*╭━━〔 🎬 CINESUBZ RESULTS 〕━━╮*','','*🔎 SEARCH:* '+b(q),'*📦 RESULTS:* '+b(movies.length+tvs.length),''];if(movies.length)a.push('*🎬 MOVIES*',list(movies,x=>b(x.title)+(x.rating?' ⭐ '+b(x.rating):''),12),'');if(tvs.length)a.push('*📺 TV SHOWS*',list(tvs,x=>b(x.title)+(x.rating?' ⭐ '+b(x.rating):''),12,movies.length),'');a.push('*━━━━━━━━━━━━━━━━━━━━*','*↪ Reply with a number to select*','*⏳ Selection expires in 30 minutes*','*✦ GOD VOIP MD*','*╰━━━━━━━━━━━━━━━━━━━━╯*');return a.join('\n');}
-function movieText(d){const a=['*╭━━〔 🎬 MOVIE DETAILS 〕━━╮*','',b(d.title||'Movie'),'📅 *Year:* '+b(d.year||'N/A'),'⭐ *IMDb ID:* '+b(d.imdbId||'N/A'),'🎥 *Quality:* '+b(d.quality||'N/A'),'⏱️ *Duration:* '+b(d.duration||'N/A'),'🌍 *Country:* '+b(d.country||'N/A'),'🎬 *Director:* '+b(d.director||'N/A'),'📝 *Subtitles:* '+b(d.subtitleBy||'N/A')];if(d.genres?.length)a.push('🏷️ *Genres:* '+b(d.genres.join(', ')));if(d.cast?.length)a.push('','*CAST*',...d.cast.slice(0,6).map(x=>'• '+b(x.name)+' — '+b(x.role||'')));if(d.description)a.push('','*DESCRIPTION*',b(clean(d.description,850)));if(d.downloadLinks?.length)a.push('','*DOWNLOAD OPTIONS*',list(d.downloadLinks,x=>b(x.info||x.quality||'Download'),10),'','*↪ Reply with a number to get direct link*');a.push('','*✦ GOD VOIP MD*','*╰━━━━━━━━━━━━━━━━━━━━╯*');return a.join('\n');}
-function tvText(d){const seasons=(d.seasons||[]).map(s=>({...s,episodes:(s.episodes||[]).filter(e=>valid(e.url))}));const eps=seasons.flatMap(s=>s.episodes.map(e=>({...e,season_no:s.season_no})));const a=['*╭━━〔 📺 TV SHOW DETAILS 〕━━╮*','',b(d.title||'TV Show'),'📅 *Year:* '+b(d.year||'N/A'),'⭐ *IMDb:* '+b(d.imdbRating||'N/A'),'🆔 *IMDb ID:* '+b(d.imdbId||'N/A')];if(d.genres?.length)a.push('🏷️ *Genres:* '+b(d.genres.join(', ')));if(d.cast?.length)a.push('','*CAST*',...d.cast.slice(0,5).map(x=>'• '+b(x.name)+' — '+b(x.role||'')));if(seasons.length)a.push('','*SEASONS*',...seasons.map((s,i)=>'*'+(i+1)+'.* '+b('Season '+s.season_no)+' — '+b(s.episodes.length+' episodes')));if(eps.length)a.push('','*EPISODES*',list(eps,e=>b('S'+e.season_no+' E'+e.episode_no)+' — '+b(e.title||'Episode'),40),'','*↪ Reply with episode number to open*','*↪ All season links: .cz season dl 1*');a.push('','*✦ GOD VOIP MD*','*╰━━━━━━━━━━━━━━━━━━━━╯*');return{text:a.join('\n'),seasons,eps};}
-function episodeText(d){const a=['*╭━━〔 📺 EPISODE DETAILS 〕━━╮*','',b(d.title||'Episode'),'📺 *Show:* '+b(d.show_name||'N/A'),'📅 *Year:* '+b(d.year||'N/A'),'⭐ *Rating:* '+b(d.rating||'N/A')];if(d.dl_links?.length)a.push('','*DOWNLOAD QUALITIES*',list(d.dl_links,x=>b(x.info||'Download'),10),'','*↪ Reply with a number to get direct link*');a.push('','*✦ GOD VOIP MD*','*╰━━━━━━━━━━━━━━━━━━━━╯*');return a.join('\n');}
-async function search(c,q,filter='all'){if(!q)return say(c,'*Usage: .cz Movie Name*');const j=await api('search',{q,filter}),d=j.data||{},movies=(d.movies||[]).filter(x=>valid(x.url)).slice(0,12),tvs=(d.tvshows||[]).filter(x=>valid(x.url)).slice(0,12),items=[...movies.map(x=>({...x,kind:'movie'})),...tvs.map(x=>({...x,kind:'tv'}))];if(!items.length)return say(c,'*😕 No results found. Try another title.*');set(c,{mode:'search',items});return say(c,resultsText(j.query||q,movies,tvs));}
-async function openMovie(c,x){const d=(await api('info',{url:x.url})).data||{};set(c,{mode:'movie',links:d.downloadLinks||[]});return say(c,movieText(d));}
-async function openTv(c,x){const d=(await api('tv',{url:x.url})).data||{},v=tvText(d);set(c,{mode:'tv',seasons:v.seasons,eps:v.eps,title:d.title,selectedSeason:null});return say(c,v.text);}
-async function openEp(c,x){if(!valid(x?.url))throw Error('Invalid episode URL');const d=(await api('episode',{url:x.url})).data||{};set(c,{mode:'episode',data:d,links:d.dl_links||[]});return say(c,episodeText(d));}
-async function dl(c,s,n){const x=s.links?.[n];if(!x)return say(c,'*❌ Invalid download number.*');const url=x.link||x.url;if(!valid(url))throw Error('Invalid download page URL');const d=(await api('download',{url,type:s.mode==='episode'?'episode':'movie'})).data||{},links=(d.dl_links||[]).filter(x=>/^https:\/\//i.test(x?.url||''));if(!links.length)throw Error('No direct download URL returned');const a=['*╭━━〔 ⬇️ DIRECT DOWNLOAD 〕━━╮*','',b(d.name||x.info||'Download'),'💾 *Size:* '+b(d.size||'N/A'),''];links.slice(0,5).forEach((x,i)=>a.push('*'+(i+1)+'. '+clean(x.type||'Direct',20)+'*',x.url));a.push('','*⚠️ Signed links may expire. Save soon.*','*✦ GOD VOIP MD*','*╰━━━━━━━━━━━━━━━━━━━━╯*');return say(c,a.join('\n'));}
-async function bulk(c,s,n){const season=s.seasons?.[n-1];if(!season)return say(c,'*❌ Season not found. Open a TV show first.*');const eps=(season.episodes||[]).filter(e=>valid(e.url));if(!eps.length)return say(c,'*❌ No episodes found in this season.*');if(eps.length>30)return say(c,'*⚠️ Maximum 30 episodes per bulk run.*');const done=[],failed=[];for(const ep of eps){try{const d=(await api('episode',{url:ep.url})).data||{},opts=(d.dl_links||[]).filter(x=>valid(x.link||x.url)).sort((a,b)=>Number((String(b.info).match(/(2160|1080|720|480|360)p/i)||[])[1]||0)-Number((String(a.info).match(/(2160|1080|720|480|360)p/i)||[])[1]||0));let found;for(const opt of opts){try{const z=(await api('download',{url:opt.link||opt.url,type:'episode'})).data||{},direct=(z.dl_links||[]).find(y=>/^https:\/\//i.test(y.url||''));if(direct){found={url:direct.url,quality:opt.info||'Direct'};break;}}catch{}}if(found)done.push({ep,...found});else failed.push(ep);}catch{failed.push(ep);}}if(!done.length)return say(c,'*❌ Could not resolve any episode links.*');const a=['*╭━━〔 📦 SEASON DOWNLOADS 〕━━╮*',b(s.title||'TV Show'),'*Season:* '+b(season.season_no),'*Ready:* '+b(done.length+'/'+eps.length),''];for(const x of done)a.push('*E'+clean(x.ep.episode_no,8)+' — '+clean(x.ep.title||'Episode',80)+'*',b(x.quality),x.url,'');if(failed.length)a.push('*Failed:* '+b(failed.map(x=>x.episode_no).join(', ')));a.push('*⚠️ Signed links may expire.*','*✦ GOD VOIP MD*','*╰━━━━━━━━━━━━━━━━━━━━╯*');const t=a.join('\n');for(let i=0;i<t.length;i+=3300)await say(c,t.slice(i,i+3300));}
-async function choose(c,n){const s=get(c);if(!s)return false;if(s.mode==='search'){const x=s.items[n-1];if(!x){await say(c,'*❌ Invalid result number.*');return true;}if(x.kind==='tv')await openTv(c,x);else await openMovie(c,x);return true;}if(s.mode==='tv'){const x=s.eps[n-1];if(!x){await say(c,'*❌ Invalid episode number.*');return true;}await openEp(c,x);return true;}if(s.mode==='movie'||s.mode==='episode'){await dl(c,s,n-1);return true;}return false;}
-async function plainReply(c,text){const v=String(text||'').trim();if(!/^\d{1,3}$/.test(v))return false;try{return await choose(c,Number(v));}catch(e){console.error('[CINESUBZ REPLY]',e?.stack||e);await say(c,'*❌ CineSubz error:* '+b(e.message||'Unknown error'));return true;}}
-export default{name:'cinesubz',aliases:['cz','cs','cinesearch'],desc:'CineSubz movie and TV search, episode and season downloads',ownerOnly:false,async onMessage(c){return plainReply(c,c.text);},async run(c){await react(c);try{const raw=String(c.text||'').trim(),p=raw.split(/\s+/).filter(Boolean),first=(p[0]||'').toLowerCase();if(!KEY)throw Error('MOCHI_API_KEY secret එක configure කරලා නැහැ.');if(!raw||first==='help')return say(c,'*CINESUBZ COMMANDS*\n\n*.cz Movie Name* — Search\n*Reply with a number* — Select result/episode/download\n*.cz season 1* — Select season\n*.cz season dl 1* — Download all season links\n*.cz next / .cz prev* — Navigate\n\n*✦ GOD VOIP MD*');if(first==='movie'||first==='movies')return search(c,p.slice(1).join(' '),'movies');if(['tv','show','tvshow'].includes(first))return search(c,p.slice(1).join(' '),'tvshows');if(first==='season'){const s=get(c);if(!s||s.mode!=='tv')return say(c,'*Open a TV show first.*');const a=(p[1]||'').toLowerCase();if(a==='dl'||a==='download'){const n=Number(p[2]||((s.selectedSeason??-1)+1));return bulk(c,s,n);}const n=Number(p[1]);if(!Number.isInteger(n)||n<1||n>s.seasons.length)return say(c,'*Choose a valid season number.*');set(c,{...s,selectedSeason:n-1});return say(c,'*✅ Season '+n+' selected.*\n*Episodes:* '+b(s.seasons[n-1].episodes.length)+'\n*Download all:* *.cz season dl '+n+'*');}if(['next','prev','previous'].includes(first)){const s=get(c);if(!s||s.mode!=='episode')return say(c,'*Open an episode first.*');const u=first==='next'?s.data?.nav?.next_episode:s.data?.nav?.previous_episode;if(!valid(u))return say(c,'*No more episodes.*');return openEp(c,{url:u});}if(/^\d+$/.test(first))return choose(c,Number(first));return search(c,raw,'all');}catch(e){console.error('[CINESUBZ]',e?.stack||e);return say(c,'*❌ CineSubz error:* '+b(e.message||'Unknown error'));}}};
+// GOD VOIP MD — CineSubz optimized season/episode selector
+const BASE = 'https://mochi-apis.koyeb.app/api/movie/cinesubz';
+const KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env.CINESUBZ_API_KEY || '';
+const sessions = new Map();
+const TTL = 30 * 60 * 1000;
+const clean = (v, n = 180) => String(v ?? '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#8217;|&#039;/g, "'").replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+const bold = v => '*' + clean(v, 450) + '*';
+const validPage = value => {
+  try {
+    const u = new URL(String(value || ''));
+    return u.protocol === 'https:' && (u.hostname === 'cinesubz.net' || u.hostname.endsWith('.cinesubz.net'));
+  } catch { return false; }
+};
+const sessionKey = c => String(c.jid) + '|' + String(c.m?.key?.participantAlt || c.m?.key?.participant || c.m?.key?.remoteJidAlt || c.jid);
+function getSession(c) {
+  const key = sessionKey(c), session = sessions.get(key);
+  if (!session || Date.now() - session.at > TTL) { sessions.delete(key); return null; }
+  session.at = Date.now();
+  return session;
+}
+function setSession(c, value) {
+  sessions.set(sessionKey(c), { ...value, at: Date.now() });
+  if (sessions.size > 1000) {
+    const oldest = [...sessions].sort((a, b) => a[1].at - b[1].at).slice(0, 200);
+    for (const [key] of oldest) sessions.delete(key);
+  }
+}
+async function api(endpoint, params = {}) {
+  if (!KEY) throw new Error('MOCHI_API_KEY secret එක hosting environment secrets වල configure කරන්න.');
+  const url = new URL(BASE + '/' + endpoint);
+  for (const [key, value] of Object.entries(params)) if (value != null && value !== '') url.searchParams.set(key, String(value));
+  url.searchParams.set('api_key', KEY);
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': 'GOD-VOIP-MD-CineSubz/4.0' },
+    signal: AbortSignal.timeout(40000)
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.success === false || data.status === false) {
+    throw new Error(clean(data?.message || data?.error || 'API HTTP ' + response.status));
+  }
+  return data;
+}
+const say = (c, text) => c.reply(text);
+async function react(c, emoji = '🎬') {
+  try { await c.sock.sendMessage(c.jid, { react: { text: emoji, key: c.m.key } }); } catch {}
+}
+function numbered(items, render, start = 1) {
+  return items.map((item, i) => '*' + (start + i) + '.* ' + render(item)).join('\n');
+}
+function resultsText(query, movies, tvs) {
+  const lines = ['*╭━━〔 🎬 CINESUBZ RESULTS 〕━━╮*', '', '*🔎 SEARCH:* ' + bold(query), '*📦 RESULTS:* ' + bold(movies.length + tvs.length), ''];
+  if (movies.length) lines.push('*🎬 MOVIES*', numbered(movies, x => bold(x.title) + (x.rating ? ' ⭐ ' + bold(x.rating) : '')), '');
+  if (tvs.length) lines.push('*📺 TV SHOWS*', numbered(tvs, x => bold(x.title) + (x.rating ? ' ⭐ ' + bold(x.rating) : ''), movies.length + 1), '');
+  lines.push('*━━━━━━━━━━━━━━━━━━━━*', '*↪ Reply with a number to select*', '*⏳ Menu expires in 30 minutes*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+  return lines.join('\n');
+}
+function movieText(d) {
+  const lines = ['*╭━━〔 🎬 MOVIE DETAILS 〕━━╮*', '', bold(d.title || 'Movie'), '📅 *Year:* ' + bold(d.year || 'N/A'), '⭐ *IMDb ID:* ' + bold(d.imdbId || 'N/A'), '🎥 *Quality:* ' + bold(d.quality || 'N/A'), '⏱️ *Duration:* ' + bold(d.duration || 'N/A'), '🌍 *Country:* ' + bold(d.country || 'N/A'), '🎬 *Director:* ' + bold(d.director || 'N/A'), '📝 *Subtitles:* ' + bold(d.subtitleBy || 'N/A')];
+  if (d.genres?.length) lines.push('🏷️ *Genres:* ' + bold(d.genres.join(', ')));
+  if (d.cast?.length) lines.push('', '*CAST*', ...d.cast.slice(0, 6).map(x => '• ' + bold(x.name) + ' — ' + bold(x.role || '')));
+  if (d.description) lines.push('', '*DESCRIPTION*', bold(clean(d.description, 850)));
+  if (d.downloadLinks?.length) lines.push('', '*DOWNLOAD OPTIONS*', numbered(d.downloadLinks.slice(0, 10), x => bold(x.info || x.quality || 'Download')), '', '*↪ Reply with a number to get the direct link*');
+  lines.push('', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+  return lines.join('\n');
+}
+function makeTvMenu(data) {
+  const seasons = (data.seasons || []).map((season, index) => ({
+    ...season,
+    season_no: season.season_no ?? index + 1,
+    episodes: (season.episodes || []).filter(ep => validPage(ep.url))
+  })).filter(season => season.episodes.length);
+  const choices = [];
+  const lines = ['*╭━━〔 📺 CINESUBZ TV MENU 〕━━╮*', '', bold(data.title || 'TV Show'), ''];
+  for (const season of seasons) {
+    lines.push('*━━━ ' + bold('SEASON ' + season.season_no) + ' ━━━*');
+    const allNumber = choices.length + 1;
+    choices.push({ type: 'bulk', seasonIndex: seasons.indexOf(season) });
+    lines.push('*' + allNumber + '.* 📦 ' + bold('Season ' + season.season_no + ' — All Episodes Download'));
+    for (const episode of season.episodes) {
+      const number = choices.length + 1;
+      choices.push({ type: 'episode', episode });
+      lines.push('*' + number + '.* 📺 ' + bold('Episode ' + (episode.episode_no ?? number)) + (episode.title ? ' — ' + bold(episode.title) : ''));
+    }
+    lines.push('');
+  }
+  lines.push('*━━━━━━━━━━━━━━━━━━━━*', '*↪ Reply with the number you want*', '*1 = Download every episode in that season*', '*Single episode = choose its number*', '*⏳ Menu expires in 30 minutes*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+  return { seasons, choices, text: lines.join('\n') };
+}
+function episodeText(data) {
+  const lines = ['*╭━━〔 📺 EPISODE DETAILS 〕━━╮*', '', bold(data.title || 'Episode'), '📺 *Show:* ' + bold(data.show_name || 'N/A'), '📅 *Year:* ' + bold(data.year || 'N/A'), '⭐ *Rating:* ' + bold(data.rating || 'N/A')];
+  if (data.dl_links?.length) lines.push('', '*DOWNLOAD QUALITIES*', numbered(data.dl_links.slice(0, 10), x => bold(x.info || 'Download')), '', '*↪ Reply with a number to get the direct link*');
+  lines.push('', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+  return lines.join('\n');
+}
+async function search(c, query, filter = 'all') {
+  if (!query) return say(c, '*Usage: .cz Movie Name*');
+  const result = await api('search', { q: query, filter });
+  const data = result.data || {};
+  const movies = (data.movies || []).filter(x => validPage(x.url)).slice(0, 12);
+  const tvs = (data.tvshows || []).filter(x => validPage(x.url)).slice(0, 12);
+  const items = [...movies.map(x => ({ ...x, kind: 'movie' })), ...tvs.map(x => ({ ...x, kind: 'tv' }))];
+  if (!items.length) return say(c, '*😕 No results found. Try another title.*');
+  setSession(c, { mode: 'search', items });
+  return say(c, resultsText(result.query || query, movies, tvs));
+}
+async function openMovie(c, item) {
+  const data = (await api('info', { url: item.url })).data || {};
+  setSession(c, { mode: 'movie', links: data.downloadLinks || [] });
+  return say(c, movieText(data));
+}
+async function openTv(c, item) {
+  const data = (await api('tv', { url: item.url })).data || {};
+  const menu = makeTvMenu(data);
+  if (!menu.choices.length) return say(c, '*❌ No valid seasons or episode links were found.*');
+  setSession(c, { mode: 'tv', seasons: menu.seasons, choices: menu.choices, title: data.title || item.title });
+  return say(c, menu.text);
+}
+async function openEpisode(c, episode) {
+  if (!validPage(episode?.url)) throw new Error('Invalid episode URL');
+  const data = (await api('episode', { url: episode.url })).data || {};
+  setSession(c, { mode: 'episode', data, links: data.dl_links || [] });
+  return say(c, episodeText(data));
+}
+async function resolveDownload(c, session, index) {
+  const option = session.links?.[index];
+  if (!option) return say(c, '*❌ Invalid download number. Reply with a number shown in the quality menu.*');
+  const pageUrl = option.link || option.url;
+  if (!validPage(pageUrl)) throw new Error('Invalid download page URL');
+  const data = (await api('download', { url: pageUrl, type: session.mode === 'episode' ? 'episode' : 'movie' })).data || {};
+  const links = (data.dl_links || []).filter(link => /^https:\/\//i.test(link?.url || ''));
+  if (!links.length) throw new Error('No direct download URL returned');
+  const lines = ['*╭━━〔 ⬇️ DIRECT DOWNLOAD 〕━━╮*', '', bold(data.name || option.info || 'Download'), '💾 *Size:* ' + bold(data.size || 'N/A'), ''];
+  links.slice(0, 5).forEach((link, i) => lines.push('*' + (i + 1) + '. ' + clean(link.type || 'Direct', 20) + '*', link.url));
+  lines.push('', '*⚠️ Signed links may expire. Save soon.*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+  return say(c, lines.join('\n'));
+}
+function qualityScore(option) {
+  return Number((String(option?.info || '').match(/(2160|1080|720|480|360)p/i) || [])[1] || 0);
+}
+async function resolveOneEpisode(episode) {
+  try {
+    const data = (await api('episode', { url: episode.url })).data || {};
+    const options = (data.dl_links || []).filter(option => validPage(option.link || option.url)).sort((a, b) => qualityScore(b) - qualityScore(a));
+    for (const option of options) {
+      try {
+        const result = (await api('download', { url: option.link || option.url, type: 'episode' })).data || {};
+        const direct = (result.dl_links || []).find(link => /^https:\/\//i.test(link?.url || ''));
+        if (direct) return { episode, url: direct.url, quality: option.info || direct.type || 'Direct' };
+      } catch {}
+    }
+    return { episode, error: 'No direct link' };
+  } catch (error) {
+    return { episode, error: clean(error.message || 'Failed') };
+  }
+}
+async function downloadSeason(c, session, seasonIndex) {
+  const season = session.seasons?.[seasonIndex];
+  if (!season) return say(c, '*❌ Season not found. Open a TV show first.*');
+  const episodes = season.episodes || [];
+  if (!episodes.length) return say(c, '*❌ No episodes found in this season.*');
+  if (episodes.length > 30) return say(c, '*⚠️ This season has more than 30 episodes. Use individual episode options.*');
+  await react(c, '⏳');
+  await say(c, '*⏳ Preparing Season ' + clean(season.season_no, 12) + ' links...* ' + bold(episodes.length + ' episodes'));
+  const results = new Array(episodes.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(3, episodes.length) }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= episodes.length) return;
+      results[index] = await resolveOneEpisode(episodes[index]);
+    }
+  });
+  await Promise.all(workers);
+  const ready = results.filter(result => result?.url);
+  const failed = results.filter(result => !result?.url);
+  if (!ready.length) return say(c, '*❌ Could not resolve any episode links. Please try again later.*');
+  const lines = ['*╭━━〔 📦 SEASON DOWNLOAD LINKS 〕━━╮*', bold(session.title || 'TV Show'), '*Season:* ' + bold(season.season_no), '*Ready:* ' + bold(ready.length + '/' + episodes.length), ''];
+  for (const result of ready) {
+    lines.push('*Episode ' + clean(result.episode.episode_no ?? '?', 8) + ' — ' + clean(result.episode.title || 'Episode', 75) + '*', bold(result.quality), result.url, '');
+  }
+  if (failed.length) lines.push('*⚠️ Failed episodes:* ' + bold(failed.map(result => result.episode.episode_no ?? '?').join(', ')), '');
+  lines.push('*⚠️ Signed links may expire. Save them soon.*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+  const message = lines.join('\n');
+  for (let offset = 0; offset < message.length; offset += 3300) await say(c, message.slice(offset, offset + 3300));
+}
+async function choose(c, number) {
+  const session = getSession(c);
+  if (!session) return false;
+  if (session.mode === 'search') {
+    const item = session.items[number - 1];
+    if (!item) { await say(c, '*❌ Invalid result number.*'); return true; }
+    if (item.kind === 'tv') await openTv(c, item);
+    else await openMovie(c, item);
+    return true;
+  }
+  if (session.mode === 'tv') {
+    const choice = session.choices?.[number - 1];
+    if (!choice) { await say(c, '*❌ Invalid menu number. Reply using a number shown in the TV menu.*'); return true; }
+    if (choice.type === 'bulk') await downloadSeason(c, session, choice.seasonIndex);
+    else await openEpisode(c, choice.episode);
+    return true;
+  }
+  if (session.mode === 'movie' || session.mode === 'episode') {
+    await resolveDownload(c, session, number - 1);
+    return true;
+  }
+  return false;
+}
+async function plainReply(c, text) {
+  const value = String(text || '').trim();
+  if (!/^\d{1,3}$/.test(value)) return false;
+  if (!getSession(c)) return false;
+  await react(c);
+  try { return await choose(c, Number(value)); }
+  catch (error) {
+    console.error('[CINESUBZ REPLY]', error?.stack || error);
+    await say(c, '*❌ CineSubz error:* ' + bold(error.message || 'Unknown error'));
+    return true;
+  }
+}
+export default {
+  name: 'cinesubz',
+  aliases: ['cz', 'cs', 'cinesearch'],
+  desc: 'CineSubz movies, TV seasons, bulk episode links and individual downloads',
+  ownerOnly: false,
+  async onMessage(context) { return plainReply(context, context.text); },
+  async run(c) {
+    await react(c);
+    try {
+      const raw = String(c.text || '').trim();
+      const parts = raw.split(/\s+/).filter(Boolean);
+      const first = (parts[0] || '').toLowerCase();
+      if (!KEY) throw new Error('MOCHI_API_KEY secret එක hosting environment එකේ configure කරලා නැහැ.');
+      if (!raw || first === 'help') {
+        return say(c, '*CINESUBZ COMMANDS*\n\n*.cz Movie Name* — Search\n*Reply with a number* — Select movie, season-all, episode or quality\n*.cz movie Name* — Movies only\n*.cz tv Name* — TV shows only\n*.cz next / .cz prev* — Episode navigation\n\n*✦ GOD VOIP MD*');
+      }
+      if (first === 'movie' || first === 'movies') return search(c, parts.slice(1).join(' '), 'movies');
+      if (['tv', 'show', 'tvshow'].includes(first)) return search(c, parts.slice(1).join(' '), 'tvshows');
+      if (['next', 'prev', 'previous'].includes(first)) {
+        const session = getSession(c);
+        if (!session || session.mode !== 'episode') return say(c, '*Open an episode first.*');
+        const url = first === 'next' ? session.data?.nav?.next_episode : session.data?.nav?.previous_episode;
+        if (!validPage(url)) return say(c, '*No more episodes.*');
+        return openEpisode(c, { url });
+      }
+      if (/^\d+$/.test(first)) return choose(c, Number(first));
+      return search(c, raw, 'all');
+    } catch (error) {
+      console.error('[CINESUBZ]', error?.stack || error);
+      return say(c, '*❌ CineSubz error:* ' + bold(error.message || 'Unknown error'));
+    }
+  }
+};
