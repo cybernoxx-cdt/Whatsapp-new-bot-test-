@@ -14,6 +14,14 @@ function unwrap(message) {
   return current;
 }
 
+function containsViewOnce(message, depth = 0) {
+  if (!message || typeof message !== 'object' || depth > 8) return false;
+  if (message.viewOnceMessage || message.viewOnceMessageV2 || message.viewOnceMessageV2Extension) return true;
+  return Object.values(message).some(v => v && typeof v === 'object' && containsViewOnce(v, depth + 1));
+}
+
+
+
 function mediaFromMessage(message) {
   const node = unwrap(message);
   for (const key of ['videoMessage', 'audioMessage', 'documentMessage']) {
@@ -35,17 +43,28 @@ function findMedia(ctx) {
   return mediaFromMessage(context?.quotedMessage);
 }
 
+// Stream the download straight to a temp file instead of buffering the
+// whole file in RAM (P2), then read it back once for the local store.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 async function readStream(stream) {
-  const chunks = [];
+  const tmp = path.join(os.tmpdir(), `tourl-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`);
+  const out = fs.createWriteStream(tmp);
   let size = 0;
-  for await (const chunk of stream) {
-    size += chunk.length;
-    if (size > 150 * 1024 * 1024) throw new Error('Media file එක 150 MB limit එක ඉක්මවා ඇත.');
-    chunks.push(Buffer.from(chunk));
+  try {
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > 150 * 1024 * 1024) throw new Error('Media file එක 150 MB limit එක ඉක්මවා ඇත.');
+      if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
+    }
+    await new Promise((res, rej) => { out.end(res); out.on('error', rej); });
+    const buffer = fs.readFileSync(tmp);
+    if (!buffer.length) throw new Error('WhatsApp media download එක හිස්.');
+    return buffer;
+  } finally {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
   }
-  const buffer = Buffer.concat(chunks);
-  if (!buffer.length) throw new Error('WhatsApp media download එක හිස්.');
-  return buffer;
 }
 
 async function downloadMedia(found) {
@@ -61,6 +80,8 @@ export default {
   ownerOnly: true,
   desc: 'Prepare latest local audio/video media for .acall and .vcall',
   async run(ctx) {
+    // View Once media must never be saved as reusable call media (C5).
+    if (containsViewOnce(ctx.m.message)) return ctx.reply('🔒 View Once media සඳහා .tourl save කිරීම support කරන්නේ නැහැ. Senderගෙන් normal media එකක් ලෙස නැවත share කරන්න කියන්න.');
     const found = findMedia(ctx);
     if (!found) return ctx.reply('Audio/video එකකට reply කරලා .tourl යවන්න. Image files call media ලෙස භාවිතා කරන්න බැහැ.');
 

@@ -1,7 +1,15 @@
 // .link — upload replied WhatsApp media to DNUZ and return its public URL.
 import { downloadContentFromMessage } from '@dnuzi/baileys';
 
-const BASE = (process.env.DNUZ_API_BASE || 'https://db.dnuz.top').replace(/\/$/, '');
+const BASE = ((ctx) => (ctx?.config?.hosts?.dnuzApiBase || process.env.DNUZ_API_BASE || 'https://db.dnuz.top'));
+const LINK_EXPIRY_SECONDS = 7 * 24 * 3600; // links expire after 7 days (was: never)
+const ALLOWED_MIME_PREFIXES = ['image/', 'audio/', 'video/'];
+
+function containsViewOnce(message, depth = 0) {
+    if (!message || typeof message !== 'object' || depth > 8) return false;
+    if (message.viewOnceMessage || message.viewOnceMessageV2 || message.viewOnceMessageV2Extension) return true;
+    return Object.values(message).some(v => v && typeof v === 'object' && containsViewOnce(v, depth + 1));
+}
 const KEY = process.env.DNUZ_API_KEY || '';
 
 function unwrap(message) {
@@ -18,6 +26,10 @@ function unwrap(message) {
 }
 
 function getMedia(ctx) {
+    // View Once media must never be made permanent/public (C5).
+    if (containsViewOnce(ctx.m.message)) return { viewOnce: true };
+    const _ctxInfo = ctx.m.message?.extendedTextMessage?.contextInfo;
+    if (_ctxInfo?.quotedMessage && containsViewOnce(_ctxInfo.quotedMessage)) return { viewOnce: true };
     const own = unwrap(ctx.m.message);
     const keys = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'];
     for (const key of keys) if (own?.[key]) return { node: own[key], type: key.replace('Message', '') };
@@ -56,7 +68,10 @@ export default {
     async run(ctx) {
         if (!KEY) return ctx.reply('❌ DNUZ_API_KEY එක hosting environment secrets වලට add කරන්න.');
         const found = getMedia(ctx);
+        if (found?.viewOnce) return ctx.reply('🔒 View Once media සඳහා .link upload කිරීම support කරන්නේ නැහැ. Senderගෙන් normal media එකක් ලෙස නැවත share කරන්න කියන්න.');
         if (!found) return ctx.reply('📎 Image / Video / Audio / Document එකකට reply කරලා .link යවන්න.');
+        const _mime = found.node.mimetype || '';
+        if (!ALLOWED_MIME_PREFIXES.some(p => _mime.startsWith(p))) return ctx.reply('❌ Only image, audio and video media can be uploaded.');
 
         const status = await ctx.reply('⏳ Media එක DNUZ වෙත upload කරනවා...');
         try {
@@ -64,9 +79,10 @@ export default {
             const mime = found.node.mimetype || 'application/octet-stream';
             const ext = mime.split('/')[1]?.split(';')[0]?.replace(/[^a-z0-9.+-]/gi, '') || 'bin';
             const name = String(found.node.fileName || `whatsapp-${Date.now()}.${ext}`).slice(0, 150);
+            const base = BASE(ctx);
             const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY };
 
-            const presignResponse = await fetch(BASE + '/api/presign', {
+            const presignResponse = await fetch(base + '/api/presign', {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({ name, size: buffer.length, type: mime }),
@@ -85,10 +101,10 @@ export default {
             });
             if (!uploadResponse.ok) throw new Error('DNUZ upload failed: HTTP ' + uploadResponse.status);
 
-            const completeResponse = await fetch(BASE + '/api/complete', {
+            const completeResponse = await fetch(base + '/api/complete', {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({ key: presign.key, name, expires: 0 }),
+                body: JSON.stringify({ key: presign.key, name, expires: LINK_EXPIRY_SECONDS }),
                 signal: AbortSignal.timeout(30000),
             });
             const complete = await completeResponse.json().catch(() => ({}));
