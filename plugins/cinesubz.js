@@ -1,14 +1,21 @@
-// GOD VOIP MD — CineSubz optimized season/episode selector
+// GOD VOIP MD — CineSubz TV quality picker + real WhatsApp MP4 document delivery
 const BASE = 'https://mochi-apis.koyeb.app/api/movie/cinesubz';
 const KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env.CINESUBZ_API_KEY || '';
 const sessions = new Map();
 const TTL = 30 * 60 * 1000;
+const MAX_BULK_EPISODES = 20;
 const clean = (v, n = 180) => String(v ?? '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#8217;|&#039;/g, "'").replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const bold = v => '*' + clean(v, 450) + '*';
 const validPage = value => {
   try {
     const u = new URL(String(value || ''));
     return u.protocol === 'https:' && (u.hostname === 'cinesubz.net' || u.hostname.endsWith('.cinesubz.net'));
+  } catch { return false; }
+};
+const validDirect = value => {
+  try {
+    const u = new URL(String(value || ''));
+    return u.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(u.hostname);
   } catch { return false; }
 };
 const sessionKey = c => String(c.jid) + '|' + String(c.m?.key?.participantAlt || c.m?.key?.participant || c.m?.key?.remoteJidAlt || c.jid);
@@ -25,163 +32,230 @@ function setSession(c, value) {
     for (const [key] of oldest) sessions.delete(key);
   }
 }
+async function react(c, emoji) {
+  try { await c.sock.sendMessage(c.jid, { react: { text: emoji, key: c.m.key } }); } catch {}
+}
+const say = (c, text) => c.reply(text);
 async function api(endpoint, params = {}) {
   if (!KEY) throw new Error('MOCHI_API_KEY secret එක hosting environment secrets වල configure කරන්න.');
   const url = new URL(BASE + '/' + endpoint);
   for (const [key, value] of Object.entries(params)) if (value != null && value !== '') url.searchParams.set(key, String(value));
   url.searchParams.set('api_key', KEY);
   const response = await fetch(url, {
-    headers: { Accept: 'application/json', 'User-Agent': 'GOD-VOIP-MD-CineSubz/4.0' },
+    headers: { Accept: 'application/json', 'User-Agent': 'GOD-VOIP-MD-CineSubz/5.0' },
     signal: AbortSignal.timeout(40000)
   });
-  const data = await response.json().catch(() => null);
-  if (!response.ok || !data || data.success === false || data.status === false) {
-    throw new Error(clean(data?.message || data?.error || 'API HTTP ' + response.status));
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body || body.success === false || body.status === false) {
+    throw new Error(clean(body?.message || body?.error || 'API HTTP ' + response.status));
   }
-  return data;
+  return body.data || {};
 }
-const say = (c, text) => c.reply(text);
-async function react(c, emoji = '🎬') {
-  try { await c.sock.sendMessage(c.jid, { react: { text: emoji, key: c.m.key } }); } catch {}
+function numbered(items, render) {
+  return items.map((item, i) => '*' + (i + 1) + '.* ' + render(item)).join('\n');
 }
-function numbered(items, render, start = 1) {
-  return items.map((item, i) => '*' + (start + i) + '.* ' + render(item)).join('\n');
+function qualityLabel(option) {
+  return clean(option?.info || option?.quality || option?.name || option?.type || 'Available quality', 130);
 }
-function resultsText(query, movies, tvs) {
-  const lines = ['*╭━━〔 🎬 CINESUBZ RESULTS 〕━━╮*', '', '*🔎 SEARCH:* ' + bold(query), '*📦 RESULTS:* ' + bold(movies.length + tvs.length), ''];
-  if (movies.length) lines.push('*🎬 MOVIES*', numbered(movies, x => bold(x.title) + (x.rating ? ' ⭐ ' + bold(x.rating) : '')), '');
-  if (tvs.length) lines.push('*📺 TV SHOWS*', numbered(tvs, x => bold(x.title) + (x.rating ? ' ⭐ ' + bold(x.rating) : ''), movies.length + 1), '');
-  lines.push('*━━━━━━━━━━━━━━━━━━━━*', '*↪ Reply with a number to select*', '*⏳ Menu expires in 30 minutes*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
-  return lines.join('\n');
+function qualityKey(option) {
+  const label = qualityLabel(option);
+  const match = label.match(/(2160|1440|1080|720|576|480|360|240)\s*p?/i);
+  return match ? match[1] + 'p' : label.toLowerCase().split(/[•|]/)[0].trim();
 }
-function movieText(d) {
-  const lines = ['*╭━━〔 🎬 MOVIE DETAILS 〕━━╮*', '', bold(d.title || 'Movie'), '📅 *Year:* ' + bold(d.year || 'N/A'), '⭐ *IMDb ID:* ' + bold(d.imdbId || 'N/A'), '🎥 *Quality:* ' + bold(d.quality || 'N/A'), '⏱️ *Duration:* ' + bold(d.duration || 'N/A'), '🌍 *Country:* ' + bold(d.country || 'N/A'), '🎬 *Director:* ' + bold(d.director || 'N/A'), '📝 *Subtitles:* ' + bold(d.subtitleBy || 'N/A')];
-  if (d.genres?.length) lines.push('🏷️ *Genres:* ' + bold(d.genres.join(', ')));
-  if (d.cast?.length) lines.push('', '*CAST*', ...d.cast.slice(0, 6).map(x => '• ' + bold(x.name) + ' — ' + bold(x.role || '')));
-  if (d.description) lines.push('', '*DESCRIPTION*', bold(clean(d.description, 850)));
-  if (d.downloadLinks?.length) lines.push('', '*DOWNLOAD OPTIONS*', numbered(d.downloadLinks.slice(0, 10), x => bold(x.info || x.quality || 'Download')), '', '*↪ Reply with a number to get the direct link*');
-  lines.push('', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+function qualityRank(option) {
+  const match = qualityKey(option).match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+function sizeLabel(option) {
+  const label = qualityLabel(option);
+  const match = label.match(/\b\d+(?:\.\d+)?\s*(?:GB|MB|KB)\b/i);
+  return match ? match[0] : '';
+}
+function formatSearch(query, movies, tvs) {
+  const lines = ['*╭━━〔 🎬 CINESUBZ SEARCH 〕━━╮*', '', '🔎 *Search:* ' + bold(query), '📦 *Results:* ' + bold(movies.length + tvs.length), ''];
+  if (movies.length) lines.push('*🎬 MOVIES*', ...movies.map((x, i) => '*' + (i + 1) + '.* ' + bold(x.title)), '');
+  if (tvs.length) lines.push('*📺 TV SERIES*', ...tvs.map((x, i) => '*' + (movies.length + i + 1) + '.* ' + bold(x.title)), '');
+  lines.push('*━━━━━━━━━━━━━━━━━━━━*', '↪️ Reply with a number to open', '⏳ Expires in 30 minutes', '*✦ GOD VOIP MD*');
   return lines.join('\n');
 }
 function makeTvMenu(data) {
-  const seasons = (data.seasons || []).map((season, index) => ({
+  const seasons = (data.seasons || []).map((season, i) => ({
     ...season,
-    season_no: season.season_no ?? index + 1,
+    season_no: season.season_no ?? season.season ?? i + 1,
     episodes: (season.episodes || []).filter(ep => validPage(ep.url))
   })).filter(season => season.episodes.length);
   const choices = [];
-  const lines = ['*╭━━〔 📺 CINESUBZ TV MENU 〕━━╮*', '', bold(data.title || 'TV Show'), ''];
-  for (const season of seasons) {
+  const lines = ['*╭━━〔 📺 CINESUBZ TV SERIES 〕━━╮*', '', bold(data.title || 'TV Series'), ''];
+  for (let si = 0; si < seasons.length; si++) {
+    const season = seasons[si];
     lines.push('*━━━ ' + bold('SEASON ' + season.season_no) + ' ━━━*');
-    const allNumber = choices.length + 1;
-    choices.push({ type: 'bulk', seasonIndex: seasons.indexOf(season) });
-    lines.push('*' + allNumber + '.* 📦 ' + bold('Season ' + season.season_no + ' — All Episodes Download'));
-    for (const episode of season.episodes) {
-      const number = choices.length + 1;
-      choices.push({ type: 'episode', episode });
-      lines.push('*' + number + '.* 📺 ' + bold('Episode ' + (episode.episode_no ?? number)) + (episode.title ? ' — ' + bold(episode.title) : ''));
+    choices.push({ type: 'bulk', seasonIndex: si });
+    lines.push('*' + choices.length + '.* 📦 ' + bold('Season ' + season.season_no + ' — All Episodes'));
+    for (let ei = 0; ei < season.episodes.length; ei++) {
+      const episode = season.episodes[ei];
+      choices.push({ type: 'episode', episode, seasonIndex: si });
+      lines.push('*' + choices.length + '.* 🎞️ ' + bold('Episode ' + (episode.episode_no ?? ei + 1)) + (episode.title ? ' — ' + bold(episode.title) : ''));
     }
     lines.push('');
   }
-  lines.push('*━━━━━━━━━━━━━━━━━━━━*', '*↪ Reply with the number you want*', '*1 = Download every episode in that season*', '*Single episode = choose its number*', '*⏳ Menu expires in 30 minutes*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+  lines.push('*━━━━━━━━━━━━━━━━━━━━*', '1️⃣ Select Season All to choose quality for every episode', '🎬 Select an episode to choose its own quality', '↪️ Reply with a menu number', '⏳ Expires in 30 minutes', '*✦ GOD VOIP MD*');
   return { seasons, choices, text: lines.join('\n') };
 }
-function episodeText(data) {
-  const lines = ['*╭━━〔 📺 EPISODE DETAILS 〕━━╮*', '', bold(data.title || 'Episode'), '📺 *Show:* ' + bold(data.show_name || 'N/A'), '📅 *Year:* ' + bold(data.year || 'N/A'), '⭐ *Rating:* ' + bold(data.rating || 'N/A')];
-  if (data.dl_links?.length) lines.push('', '*DOWNLOAD QUALITIES*', numbered(data.dl_links.slice(0, 10), x => bold(x.info || 'Download')), '', '*↪ Reply with a number to get the direct link*');
-  lines.push('', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
-  return lines.join('\n');
-}
 async function search(c, query, filter = 'all') {
-  if (!query) return say(c, '*Usage: .cz Movie Name*');
-  const result = await api('search', { q: query, filter });
-  const data = result.data || {};
-  const movies = (data.movies || []).filter(x => validPage(x.url)).slice(0, 12);
-  const tvs = (data.tvshows || []).filter(x => validPage(x.url)).slice(0, 12);
+  if (!query) return say(c, '*Usage: .cz Movie or TV Series Name*');
+  const data = await api('search', { q: query, filter });
+  const movies = (data.movies || []).filter(x => validPage(x.url)).slice(0, 10);
+  const tvs = (data.tvshows || []).filter(x => validPage(x.url)).slice(0, 10);
   const items = [...movies.map(x => ({ ...x, kind: 'movie' })), ...tvs.map(x => ({ ...x, kind: 'tv' }))];
   if (!items.length) return say(c, '*😕 No results found. Try another title.*');
   setSession(c, { mode: 'search', items });
-  return say(c, resultsText(result.query || query, movies, tvs));
+  return say(c, formatSearch(data.query || query, movies, tvs));
 }
 async function openMovie(c, item) {
-  const data = (await api('info', { url: item.url })).data || {};
-  setSession(c, { mode: 'movie', links: data.downloadLinks || [] });
-  return say(c, movieText(data));
+  const data = await api('info', { url: item.url });
+  const links = data.downloadLinks || [];
+  setSession(c, { mode: 'movie', title: data.title || item.title, links });
+  const lines = ['*╭━━〔 🎬 MOVIE DETAILS 〕━━╮*', '', bold(data.title || item.title), '📅 *Year:* ' + bold(data.year || 'N/A'), '⭐ *Rating:* ' + bold(data.rating || data.imdbId || 'N/A')];
+  if (data.description) lines.push('', bold(clean(data.description, 700)));
+  if (links.length) lines.push('', '*⬇️ DOWNLOAD QUALITIES*', numbered(links.slice(0, 10), qualityLabel), '', '↪️ Reply with a quality number');
+  else lines.push('', '❌ No download qualities found.');
+  return say(c, lines.join('\n'));
 }
 async function openTv(c, item) {
-  const data = (await api('tv', { url: item.url })).data || {};
+  const data = await api('tv', { url: item.url });
   const menu = makeTvMenu(data);
-  if (!menu.choices.length) return say(c, '*❌ No valid seasons or episode links were found.*');
+  if (!menu.choices.length) return say(c, '*❌ No valid seasons or episodes found.*');
   setSession(c, { mode: 'tv', seasons: menu.seasons, choices: menu.choices, title: data.title || item.title });
   return say(c, menu.text);
 }
-async function openEpisode(c, episode) {
+async function getEpisodeOptions(episode) {
   if (!validPage(episode?.url)) throw new Error('Invalid episode URL');
-  const data = (await api('episode', { url: episode.url })).data || {};
-  setSession(c, { mode: 'episode', data, links: data.dl_links || [] });
-  return say(c, episodeText(data));
+  const data = await api('episode', { url: episode.url });
+  const options = (data.dl_links || []).filter(x => validPage(x.link || x.url));
+  return { data, options };
 }
-async function resolveDownload(c, session, index) {
-  const option = session.links?.[index];
-  if (!option) return say(c, '*❌ Invalid download number. Reply with a number shown in the quality menu.*');
-  const pageUrl = option.link || option.url;
-  if (!validPage(pageUrl)) throw new Error('Invalid download page URL');
-  const data = (await api('download', { url: pageUrl, type: session.mode === 'episode' ? 'episode' : 'movie' })).data || {};
-  const links = (data.dl_links || []).filter(link => /^https:\/\//i.test(link?.url || ''));
-  if (!links.length) throw new Error('No direct download URL returned');
-  const lines = ['*╭━━〔 ⬇️ DIRECT DOWNLOAD 〕━━╮*', '', bold(data.name || option.info || 'Download'), '💾 *Size:* ' + bold(data.size || 'N/A'), ''];
-  links.slice(0, 5).forEach((link, i) => lines.push('*' + (i + 1) + '. ' + clean(link.type || 'Direct', 20) + '*', link.url));
-  lines.push('', '*⚠️ Signed links may expire. Save soon.*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
+async function openEpisode(c, episode, title) {
+  const result = await getEpisodeOptions(episode);
+  if (!result.options.length) return say(c, '*❌ No download qualities found for this episode.*');
+  setSession(c, { mode: 'episode_quality', title: title || result.data.title || episode.title || 'Episode', episode, options: result.options });
+  const lines = ['*╭━━〔 🎞️ SELECT EPISODE QUALITY 〕━━╮*', '', bold(result.data.title || episode.title || 'Episode'), ''];
+  lines.push(numbered(result.options.slice(0, 10), option => '🎥 ' + bold(qualityLabel(option)) + (sizeLabel(option) ? ' • 💾 ' + bold(sizeLabel(option)) : '')));
+  lines.push('', '↪️ Reply with a number to download this episode', '*✦ GOD VOIP MD*');
   return say(c, lines.join('\n'));
 }
-function qualityScore(option) {
-  return Number((String(option?.info || '').match(/(2160|1080|720|480|360)p/i) || [])[1] || 0);
+async function resolveDirect(option, type = 'episode') {
+  const pageUrl = option?.link || option?.url;
+  if (!validPage(pageUrl)) throw new Error('Invalid download page URL');
+  const data = await api('download', { url: pageUrl, type });
+  const links = (data.dl_links || []).filter(x => validDirect(x?.url));
+  if (!links.length) throw new Error('Download API did not return a valid direct media URL');
+  const preferred = links.find(x => /direct/i.test(x.type || '')) || links[0];
+  return { url: preferred.url, name: data.name || option.info || 'CineSubz Episode', size: data.size || sizeLabel(option), quality: qualityLabel(option) };
 }
-async function resolveOneEpisode(episode) {
-  try {
-    const data = (await api('episode', { url: episode.url })).data || {};
-    const options = (data.dl_links || []).filter(option => validPage(option.link || option.url)).sort((a, b) => qualityScore(b) - qualityScore(a));
-    for (const option of options) {
-      try {
-        const result = (await api('download', { url: option.link || option.url, type: 'episode' })).data || {};
-        const direct = (result.dl_links || []).find(link => /^https:\/\//i.test(link?.url || ''));
-        if (direct) return { episode, url: direct.url, quality: option.info || direct.type || 'Direct' };
-      } catch {}
-    }
-    return { episode, error: 'No direct link' };
-  } catch (error) {
-    return { episode, error: clean(error.message || 'Failed') };
+async function sendMedia(c, media, episode, index, total) {
+  const epNo = episode.episode_no ?? index + 1;
+  const epTitle = clean(episode.title || 'Episode ' + epNo, 90);
+  const fileName = clean((media.name || ('Episode ' + epNo)) + '.mp4', 150).replace(/[\\/:*?"<>|]/g, '_');
+  const caption = '📺 *' + clean(c._seriesTitle || 'CineSubz Series', 100) + '*\n' +
+    '🎞️ *Episode ' + epNo + ':* ' + epTitle + '\n' +
+    '🎥 *Quality:* ' + clean(media.quality, 100) + '\n' +
+    (media.size ? '💾 *Size:* ' + clean(media.size, 40) + '\n' : '') +
+    (total > 1 ? '📦 *Episode:* ' + (index + 1) + '/' + total + '\n' : '') +
+    '✦ *GOD VOIP MD*';
+  // Send as an MP4 document: episode files are commonly 200–500 MB, above
+  // WhatsApp's normal video-message limit. Baileys streams the remote URL.
+  await c.sock.sendMessage(c.jid, {
+    document: { url: media.url },
+    mimetype: 'video/mp4',
+    fileName,
+    caption
+  }, { quoted: c.m });
+}
+async function downloadOne(c, session, option) {
+  await react(c, '⬇️');
+  await say(c, '⏳ *Preparing ' + bold(session.title || 'episode') + ' — ' + bold(qualityLabel(option)) + '*\nPlease wait while WhatsApp uploads the MP4 file…');
+  const media = await resolveDirect(option, session.mode === 'movie_quality' ? 'movie' : 'episode');
+  if (session.mode === 'movie_quality') {
+    await c.sock.sendMessage(c.jid, { document: { url: media.url }, mimetype: 'video/mp4', fileName: clean(media.name, 150) + '.mp4', caption: '🎬 *' + clean(session.title, 120) + '*\n🎥 *Quality:* ' + clean(media.quality, 100) + '\n✦ *GOD VOIP MD*' }, { quoted: c.m });
+  } else {
+    await sendMedia(c, media, session.episode, 0, 1);
   }
+  await react(c, '✅');
+  await say(c, '*✅ MP4 sent successfully.*');
 }
-async function downloadSeason(c, session, seasonIndex) {
-  const season = session.seasons?.[seasonIndex];
-  if (!season) return say(c, '*❌ Season not found. Open a TV show first.*');
-  const episodes = season.episodes || [];
-  if (!episodes.length) return say(c, '*❌ No episodes found in this season.*');
-  if (episodes.length > 30) return say(c, '*⚠️ This season has more than 30 episodes. Use individual episode options.*');
-  await react(c, '⏳');
-  await say(c, '*⏳ Preparing Season ' + clean(season.season_no, 12) + ' links...* ' + bold(episodes.length + ' episodes'));
-  const results = new Array(episodes.length);
+async function mapLimit(items, limit, worker) {
+  const output = new Array(items.length);
   let cursor = 0;
-  const workers = Array.from({ length: Math.min(3, episodes.length) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (true) {
-      const index = cursor++;
-      if (index >= episodes.length) return;
-      results[index] = await resolveOneEpisode(episodes[index]);
+      const i = cursor++;
+      if (i >= items.length) return;
+      try { output[i] = await worker(items[i], i); }
+      catch (error) { output[i] = { error: clean(error.message || 'Failed') }; }
     }
+  }));
+  return output;
+}
+function bulkQualityOptions(episodesWithOptions) {
+  const sets = episodesWithOptions.map(item => new Set(item.options.map(qualityKey)));
+  if (!sets.length) return [];
+  const common = [...sets[0]].filter(key => sets.every(set => set.has(key)));
+  const keys = common.length ? common : [...new Set(sets.flatMap(set => [...set]))];
+  return keys.map(key => {
+    const matching = episodesWithOptions.flatMap(item => item.options).find(option => qualityKey(option) === key);
+    return { key, label: qualityLabel(matching), rank: qualityRank(matching) };
+  }).sort((a, b) => b.rank - a.rank);
+}
+async function prepareSeason(c, session, seasonIndex) {
+  const season = session.seasons?.[seasonIndex];
+  if (!season) return say(c, '*❌ Season not found.*');
+  if (season.episodes.length > MAX_BULK_EPISODES) return say(c, '*⚠️ This season has ' + season.episodes.length + ' episodes. Bulk delivery is limited to ' + MAX_BULK_EPISODES + ' at once to avoid WhatsApp rate limits. Select episodes individually.*');
+  await react(c, '📦');
+  await say(c, '🔎 *Checking available qualities for Season ' + clean(season.season_no, 10) + '…*\n📺 Episodes: *' + season.episodes.length + '*');
+  const episodeData = await mapLimit(season.episodes, 4, async episode => {
+    const result = await getEpisodeOptions(episode);
+    return { episode, data: result.data, options: result.options };
   });
-  await Promise.all(workers);
-  const ready = results.filter(result => result?.url);
-  const failed = results.filter(result => !result?.url);
-  if (!ready.length) return say(c, '*❌ Could not resolve any episode links. Please try again later.*');
-  const lines = ['*╭━━〔 📦 SEASON DOWNLOAD LINKS 〕━━╮*', bold(session.title || 'TV Show'), '*Season:* ' + bold(season.season_no), '*Ready:* ' + bold(ready.length + '/' + episodes.length), ''];
-  for (const result of ready) {
-    lines.push('*Episode ' + clean(result.episode.episode_no ?? '?', 8) + ' — ' + clean(result.episode.title || 'Episode', 75) + '*', bold(result.quality), result.url, '');
+  const ready = episodeData.filter(x => x && !x.error && x.options.length);
+  if (!ready.length) return say(c, '*❌ Could not find download qualities for this season.*');
+  const qualities = bulkQualityOptions(ready);
+  if (!qualities.length) return say(c, '*❌ No common download quality is available.*');
+  setSession(c, { mode: 'bulk_quality', title: session.title, season, episodeData: ready, failedEpisodes: episodeData.length - ready.length, qualities });
+  const lines = ['*╭━━〔 📦 SEASON QUALITY MENU 〕━━╮*', '', bold(session.title), '📺 *Season:* ' + bold(season.season_no), '🎞️ *Episodes ready:* ' + bold(ready.length + '/' + season.episodes.length), '', '*Choose quality for all episodes:*'];
+  lines.push(numbered(qualities, q => '🎥 ' + bold(q.label)));
+  lines.push('', '↪️ Reply with a number to send every episode as an MP4 document', '⚠️ Files will be sent one by one', '*✦ GOD VOIP MD*');
+  return say(c, lines.join('\n'));
+}
+function selectEpisodeOption(item, quality) {
+  const exact = item.options.find(option => qualityKey(option) === quality.key);
+  if (exact) return exact;
+  const sorted = [...item.options].sort((a, b) => qualityRank(b) - qualityRank(a));
+  return sorted.find(option => qualityRank(option) <= quality.rank) || sorted[0];
+}
+async function deliverSeason(c, session, quality) {
+  const total = session.episodeData.length;
+  await react(c, '⬇️');
+  await say(c, '📦 *Starting Season ' + clean(session.season.season_no, 10) + ' MP4 delivery…*\n🎥 Quality: ' + bold(quality.label) + '\n📺 Files: *' + total + '*\n\nFiles are sent one by one. Keep the chat open.');
+  let sent = 0, failed = [];
+  for (let i = 0; i < total; i++) {
+    const item = session.episodeData[i];
+    try {
+      const option = selectEpisodeOption(item, quality);
+      const media = await resolveDirect(option, 'episode');
+      await sendMedia(c, media, item.episode, i, total);
+      sent++;
+      await react(c, '📤');
+    } catch (error) {
+      failed.push('Episode ' + clean(item.episode.episode_no ?? i + 1, 8) + ': ' + clean(error.message || 'Failed', 100));
+    }
+    // Small pause reduces WhatsApp upload throttling without slowing API lookups.
+    if (i < total - 1) await new Promise(resolve => setTimeout(resolve, 1200));
   }
-  if (failed.length) lines.push('*⚠️ Failed episodes:* ' + bold(failed.map(result => result.episode.episode_no ?? '?').join(', ')), '');
-  lines.push('*⚠️ Signed links may expire. Save them soon.*', '*✦ GOD VOIP MD*', '*╰━━━━━━━━━━━━━━━━━━━━╯*');
-  const message = lines.join('\n');
-  for (let offset = 0; offset < message.length; offset += 3300) await say(c, message.slice(offset, offset + 3300));
+  await react(c, failed.length ? '⚠️' : '✅');
+  const summary = ['*╭━━〔 📦 SEASON DELIVERY REPORT 〕━━╮*', '📺 *Season:* ' + bold(session.season.season_no), '🎥 *Quality:* ' + bold(quality.label), '✅ *Sent:* ' + bold(sent + '/' + total)];
+  if (failed.length) summary.push('❌ *Failed:* ' + bold(failed.length), ...failed.slice(0, 15).map(x => '• ' + x));
+  summary.push('*✦ GOD VOIP MD*');
+  await say(c, summary.join('\n'));
 }
 async function choose(c, number) {
   const session = getSession(c);
@@ -189,31 +263,42 @@ async function choose(c, number) {
   if (session.mode === 'search') {
     const item = session.items[number - 1];
     if (!item) { await say(c, '*❌ Invalid result number.*'); return true; }
+    await react(c, item.kind === 'tv' ? '📺' : '🎬');
     if (item.kind === 'tv') await openTv(c, item);
     else await openMovie(c, item);
     return true;
   }
   if (session.mode === 'tv') {
-    const choice = session.choices?.[number - 1];
-    if (!choice) { await say(c, '*❌ Invalid menu number. Reply using a number shown in the TV menu.*'); return true; }
-    if (choice.type === 'bulk') await downloadSeason(c, session, choice.seasonIndex);
-    else await openEpisode(c, choice.episode);
+    const choice = session.choices[number - 1];
+    if (!choice) { await say(c, '*❌ Invalid menu number.*'); return true; }
+    if (choice.type === 'bulk') await prepareSeason(c, session, choice.seasonIndex);
+    else {
+      await react(c, '🎞️');
+      await openEpisode(c, choice.episode, session.title);
+    }
     return true;
   }
-  if (session.mode === 'movie' || session.mode === 'episode') {
-    await resolveDownload(c, session, number - 1);
+  if (session.mode === 'episode_quality' || session.mode === 'movie') {
+    const option = session.options?.[number - 1] || session.links?.[number - 1];
+    if (!option) { await say(c, '*❌ Invalid quality number.*'); return true; }
+    await downloadOne(c, { ...session, mode: session.mode === 'movie' ? 'movie_quality' : session.mode }, option);
+    return true;
+  }
+  if (session.mode === 'bulk_quality') {
+    const quality = session.qualities[number - 1];
+    if (!quality) { await say(c, '*❌ Invalid quality number.*'); return true; }
+    await deliverSeason(c, session, quality);
     return true;
   }
   return false;
 }
 async function plainReply(c, text) {
   const value = String(text || '').trim();
-  if (!/^\d{1,3}$/.test(value)) return false;
-  if (!getSession(c)) return false;
-  await react(c);
+  if (!/^\d{1,3}$/.test(value) || !getSession(c)) return false;
   try { return await choose(c, Number(value)); }
   catch (error) {
     console.error('[CINESUBZ REPLY]', error?.stack || error);
+    await react(c, '⚠️');
     await say(c, '*❌ CineSubz error:* ' + bold(error.message || 'Unknown error'));
     return true;
   }
@@ -221,32 +306,26 @@ async function plainReply(c, text) {
 export default {
   name: 'cinesubz',
   aliases: ['cz', 'cs', 'cinesearch'],
-  desc: 'CineSubz movies, TV seasons, bulk episode links and individual downloads',
+  desc: 'CineSubz movies, TV seasons, quality selection and MP4 document downloads',
   ownerOnly: false,
   async onMessage(context) { return plainReply(context, context.text); },
   async run(c) {
-    await react(c);
+    const raw = String(c.text || '').trim();
+    const parts = raw.split(/\s+/).filter(Boolean);
+    const first = (parts[0] || '').toLowerCase();
     try {
-      const raw = String(c.text || '').trim();
-      const parts = raw.split(/\s+/).filter(Boolean);
-      const first = (parts[0] || '').toLowerCase();
+      await react(c, '🔎');
       if (!KEY) throw new Error('MOCHI_API_KEY secret එක hosting environment එකේ configure කරලා නැහැ.');
       if (!raw || first === 'help') {
-        return say(c, '*CINESUBZ COMMANDS*\n\n*.cz Movie Name* — Search\n*Reply with a number* — Select movie, season-all, episode or quality\n*.cz movie Name* — Movies only\n*.cz tv Name* — TV shows only\n*.cz next / .cz prev* — Episode navigation\n\n*✦ GOD VOIP MD*');
+        return say(c, '*🎬 CINESUBZ COMMANDS*\n\n*.cz Movie Name* — Search movies and TV series\n*.cz tv Series Name* — Search TV series\n*.cz movie Movie Name* — Search movies only\n\n📺 Select a season or episode by number\n🎥 Select quality by number\n📥 MP4 files are sent directly to WhatsApp\n\n*✦ GOD VOIP MD*');
       }
       if (first === 'movie' || first === 'movies') return search(c, parts.slice(1).join(' '), 'movies');
       if (['tv', 'show', 'tvshow'].includes(first)) return search(c, parts.slice(1).join(' '), 'tvshows');
-      if (['next', 'prev', 'previous'].includes(first)) {
-        const session = getSession(c);
-        if (!session || session.mode !== 'episode') return say(c, '*Open an episode first.*');
-        const url = first === 'next' ? session.data?.nav?.next_episode : session.data?.nav?.previous_episode;
-        if (!validPage(url)) return say(c, '*No more episodes.*');
-        return openEpisode(c, { url });
-      }
       if (/^\d+$/.test(first)) return choose(c, Number(first));
       return search(c, raw, 'all');
     } catch (error) {
       console.error('[CINESUBZ]', error?.stack || error);
+      await react(c, '⚠️');
       return say(c, '*❌ CineSubz error:* ' + bold(error.message || 'Unknown error'));
     }
   }
