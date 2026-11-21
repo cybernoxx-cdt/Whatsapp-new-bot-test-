@@ -1083,8 +1083,6 @@ async function handleCommand(sock, m) {
     const rawArgs = parts.slice(1);
     const arg = rawArgs[0]?.toLowerCase();
     const extra = rawArgs[1];
-    const jid = m.key.remoteJid;
-    if (!jid || jid === 'status@broadcast') return;
 
     const isCall = name === 'call' && !extra && (arg === undefined || arg === 'on' || arg === 'off');
     const isMenu = name === 'call-menu' && arg === undefined;
