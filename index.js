@@ -19,6 +19,7 @@ import { downloadToFile } from './lib/download.js';
 import { MAX_PCM_CACHE_ENTRIES, MAX_FILE_CACHE_ENTRIES, MSG_CACHE_MAX, PRE_DECODE_DEADLINE_MS, VOIP_SLOT_TIMEOUT_MS } from './lib/constants.js';
 import { validateMediaFile } from './security.js';
 import { getLatestCallMedia } from './media-store.js';
+import { sendMenuMedia } from './lib/menu-media.js';
 import { prepare as prepareConverted, setBinaries, cleanCache } from './media-convert.js';
 
 // ---- Safe, concise logging: never print Signal ratchet/session objects ----
@@ -133,32 +134,30 @@ cleanCache();
 const statusIcon = () => (CALL_ON ? '🟢 *ON*' : '🔴 *OFF*');
 
 const MENU_TEXT = () =>
-`📞 *${config.botName}*
-
-*Auto Call:* ${statusIcon()}
-
-*Auto answer*
-▫️ ${prefix}call on — auto call ON
-▫️ ${prefix}call off — auto call OFF
-▫️ ${prefix}call — status බලන්න
-
-*Call යවන්න (owner)*
-▫️ ${prefix}vcall 94771234567 — one-to-one video call
-▫️ ${prefix}acall 94771234567 — one-to-one audio call
-▫️ Many numbers: ${prefix}acall 9477xxxxxxx,9476xxxxxxx [link]
-▫️ Any audio/video link works — auto converted (audio→ogg, video→mp4)
-▫️ ${prefix}tourl — reply to audio/video to save latest local call media
-▫️ ${prefix}mode self|inbox|group|both — bot access mode
-▫️ ${prefix}call-menu — මේ menu එක
-▫️ ${prefix}c-ping — speed
-
-*Auto answer වැඩ කරන විදිහ*
-Audio call → voice file
-Video call → video file
-
-👤 *Owner:* ${config.ownerName}
-
-${texts.footer}`;
+[
+    `╭━━〔 📞 ${config.botName} CALL MENU 〕━━╮`,
+    '│',
+    `│  Auto Call : ${statusIcon()}`,
+    '│',
+    '├──〔 AUTO ANSWER 〕',
+    `│  ◦ ${prefix}call on  — Enable auto call`,
+    `│  ◦ ${prefix}call off — Disable auto call`,
+    `│  ◦ ${prefix}call    — Check status`,
+    '│',
+    '├──〔 OUTGOING CALLS · OWNER 〕',
+    `│  ◦ ${prefix}vcall 94771234567 — Video call`,
+    `│  ◦ ${prefix}acall 94771234567 — Audio call`,
+    `│  ◦ ${prefix}acall 9477...,9476... — Multiple calls`,
+    '│',
+    '├──〔 SETTINGS 〕',
+    `│  ◦ ${prefix}mode self|inbox|group|both`,
+    `│  ◦ ${prefix}tourl — Save replied media URL`,
+    `│  ◦ ${prefix}c-ping — Check call system speed`,
+    '│',
+    '╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯',
+    '',
+    texts.footer,
+].join('\\n');
 
 const STATUS_TEXT = () =>
 `📞 *Auto Call:* ${statusIcon()}
@@ -1092,7 +1091,7 @@ async function handleCommand(sock, m) {
     const extra = rawArgs[1];
 
     const isCall = name === 'call' && !extra && (arg === undefined || arg === 'on' || arg === 'off');
-    const isMenu = name === 'call-menu' && arg === undefined;
+    const isMenu = ['call-menu', 'callmenu'].includes(name) && arg === undefined;
     const isPing = name === 'c-ping' && arg === undefined;
     const isVcall = name === 'vcall';
     const isAcall = name === 'acall';
@@ -1165,6 +1164,20 @@ async function handleCommand(sock, m) {
     const allowed = isOwner || publicAllowed;
     if (!allowed) return;
 
+    // Every recognized command gets a matching reaction before it runs.
+    const commandReactions = {
+        menu: '📋', help: '📋', commands: '📋', 'call-menu': '📞', callmenu: '📞',
+        alive: '🟢', online: '🟢', bot: '🤖', info: 'ℹ️', botinfo: 'ℹ️', status: '📊',
+        call: '📞', vcall: '📹', acall: '🎧', 'c-ping': '🏓', ping: '🏓', speed: '🏓',
+        mode: '⚙️', self: '🔒', public: '🌐', cz: '🎬', cinesubz: '🎬',
+        vv: '👁️', viewonce: '👁️', retrieve: '📥', tourl: '🔗',
+        jid: '🆔', check: '🔍', fulldp: '🖼️', pinterest: '📌',
+        privacy: '🛡️', runtime: '⏱️', owner: '👑', 'media-packs': '📦',
+    };
+    const reactionEmoji = commandReactions[name] || (plugin?.category === 'download' ? '📥' : '⚡');
+    try { await sock.sendMessage(jid, { react: { text: reactionEmoji, key: m.key } }); }
+    catch (error) { console.log('[COMMAND REACTION]', error?.message || error); }
+
     const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
 
     if (isMode || isSelf || isPublic) {
@@ -1204,21 +1217,7 @@ async function handleCommand(sock, m) {
     }
 
     if (isMenu) {
-        await reply(MENU_TEXT());
-        try {
-            const voice = await prepareConverted('https://file.dnuz.top/s3x0xx.opus', {
-                wantVideo: false,
-                maxSeconds: 900,
-            });
-            await sock.sendMessage(jid, {
-                audio: { url: voice.file },
-                mimetype: 'audio/ogg; codecs=opus',
-                ptt: true,
-                seconds: Math.max(1, Math.round(voice.duration || 0)),
-            }, { quoted: m });
-        } catch (error) {
-            console.log('[MENU VOICE NOTE] Opus conversion/send failed:', error?.message || error);
-        }
+        await sendMenuMedia(sock, jid, m, MENU_TEXT());
         return;
     }
 
