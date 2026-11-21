@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { downloadToFile } from './lib/download.js';
+import { DOWNLOAD_OVERALL_TIMEOUT_MS } from './lib/constants.js';
 
 const TMP = path.resolve(process.env.TMP_DIR || './tmp');
 const CACHE = path.join(TMP, 'media-cache');
@@ -71,6 +73,7 @@ async function download(url, dest) {
     if (/dropbox\.com/.test(url)) candidates.unshift(url.replace(/[?&]dl=0/, '').replace(/(\?|$)/, '$1dl=1&').replace(/&$/, ''));
 
     let lastErr;
+    const deadline = Date.now() + DOWNLOAD_OVERALL_TIMEOUT_MS;
     for (const candidate of [...new Set(candidates)]) {
         let origin = ''; try { origin = new URL(candidate).origin; } catch {}
         // Some hosts answer 403 to "bot-looking" requests, so try several header sets.
@@ -82,30 +85,15 @@ async function download(url, dest) {
             { 'User-Agent': 'WhatsApp/2.24.12.78 A', Accept: '*/*' },
         ];
         for (let h = 0; h < headerSets.length; h++) {
+            // Overall deadline (P4): a dead link must not block a call for ~10 minutes.
+            if (Date.now() > deadline) throw new Error('Download timed out after 90s overall deadline');
             try {
-                const res = await fetch(candidate, {
-                    redirect: 'follow',
-                    headers: headerSets[h],
-                    signal: AbortSignal.timeout(120000),
-                });
-                if (!res.ok && res.status !== 206) {
-                    const e = new Error('HTTP ' + res.status);
-                    if ([404, 410].includes(res.status)) e.permanent = true;
-                    throw e; // 401/403/5xx -> try next header set
-                }
-                const ct = (res.headers.get('content-type') || '').toLowerCase();
-                if (ct.includes('text/html')) throw new Error('link returned a web page, not a media file');
-                const len = Number(res.headers.get('content-length') || 0);
-                if (len > 250 * 1024 * 1024) throw Object.assign(new Error('file larger than 250 MB'), { permanent: true });
-                const buf = Buffer.from(await res.arrayBuffer());
-                if (!buf.length) throw new Error('empty response');
-                if (buf.length > 250 * 1024 * 1024) throw Object.assign(new Error('file larger than 250 MB'), { permanent: true });
-                fs.writeFileSync(dest + '.part', buf);
-                fs.renameSync(dest + '.part', dest);
+                // Stream straight to disk instead of buffering the whole file (P2).
+                // Per-attempt timeout is 30s; the overall deadline above caps retries.
+                await downloadToFile(candidate, dest, { timeoutMs: 30000, headers: headerSets[h] });
                 return;
             } catch (e) {
                 lastErr = e;
-                try { fs.rmSync(dest + '.part', { force: true }); } catch {}
                 if (e.permanent) break;
                 await sleep(300);
             }
@@ -163,11 +151,26 @@ async function doPrepare(source, { wantVideo = false, maxSeconds = 900 } = {}) {
     const tag = wantVideo ? 'v' : 'a';
     const outFile = path.join(CACHE, `${id}_${tag}${wantVideo ? '.mp4' : '.ogg'}`);
 
-    // cached conversion
+    // cached conversion — revalidate against the source if the entry is
+    // older than 1h, so a replaced file at the same URL is not served stale (L4).
+    const metaFile = path.join(CACHE, `${id}_${tag}.meta.json`);
     if (fs.existsSync(outFile) && fs.statSync(outFile).size > 0) {
         const info = await probe(outFile).catch(() => null);
         if (info && (wantVideo ? info.hasVideo : info.hasAudio)) {
-            return { file: outFile, kind: wantVideo ? 'video' : 'audio', duration: info.duration, ogg: wantVideo ? await extractOgg(outFile, id) : outFile };
+            let stale = false;
+            try {
+                const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+                if (isUrl(source) && Date.now() - (meta.savedAt || 0) > 3600 * 1000) {
+                    const head = await fetch(source, { method: 'HEAD', signal: AbortSignal.timeout(10000) }).catch(() => null);
+                    if (head) {
+                        const etag = head.headers.get('etag') || '';
+                        const lastMod = head.headers.get('last-modified') || '';
+                        const len = head.headers.get('content-length') || '';
+                        if ((etag && etag !== meta.etag) || (lastMod && lastMod !== meta.lastModified) || (len && len !== String(meta.contentLength))) stale = true;
+                    }
+                }
+            } catch {}
+            if (!stale) return { file: outFile, kind: wantVideo ? 'video' : 'audio', duration: info.duration, ogg: wantVideo ? await extractOgg(outFile, id) : outFile };
         }
     }
 
@@ -184,6 +187,19 @@ async function doPrepare(source, { wantVideo = false, maxSeconds = 900 } = {}) {
     let info;
     try { info = await probe(raw); }
     catch (e) { throw new Error('Not a valid audio/video file (' + e.message.slice(0, 120) + ')'); }
+    // Record source identity alongside the conversion for L4 revalidation.
+    try {
+        const meta = { savedAt: Date.now(), source };
+        if (isUrl(source)) {
+            const head = await fetch(source, { method: 'HEAD', signal: AbortSignal.timeout(10000) }).catch(() => null);
+            if (head) {
+                meta.etag = head.headers.get('etag') || '';
+                meta.lastModified = head.headers.get('last-modified') || '';
+                meta.contentLength = head.headers.get('content-length') || '';
+            }
+        }
+        fs.writeFileSync(metaFile, JSON.stringify(meta));
+    } catch {}
     if (info.duration > maxSeconds) throw new Error(`Media is longer than ${Math.round(maxSeconds / 60)} minutes.`);
 
     if (wantVideo) {

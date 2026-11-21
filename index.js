@@ -5,7 +5,6 @@
 
 import * as B from '@dnuzi/baileys';
 import Voip from '@dnuzi/baileys/voip';
-import pino from 'pino';
 import fs from 'fs';
 import crypto from 'crypto';
 import path from 'path';
@@ -14,7 +13,10 @@ import express from 'express';
 import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import config from './config.js';
-import { loadSession, sessionHash } from './session.js';
+import { loadSession, sessionHash, validateSessionDir, encryptSessionData, decryptSessionData } from './session.js';
+import { unwrapMessage } from './lib/unwrap.js';
+import { downloadToFile } from './lib/download.js';
+import { MAX_PCM_CACHE_ENTRIES, MAX_FILE_CACHE_ENTRIES, MSG_CACHE_MAX, PRE_DECODE_DEADLINE_MS, VOIP_SLOT_TIMEOUT_MS } from './lib/constants.js';
 import { validateMediaFile } from './security.js';
 import { getLatestCallMedia } from './media-store.js';
 import { prepare as prepareConverted, setBinaries, cleanCache } from './media-convert.js';
@@ -56,8 +58,10 @@ function safeLog(level, args) {
         if (value instanceof Error) return value.message;
         if (value && typeof value === 'object') return '[object details suppressed]';
         if (typeof value === 'string') {
-            let out = value.replace(/\b\d{9,15}(?=[:@\s|)])/g, n => n.slice(0, 3) + 'xxxxxx' + n.slice(-2));
-            if (process.env.GITHUB_ACTIONS) out = out.replace(/(mongodb(?:\+srv)?:\/\/)[^\s]+/gi, '$1[REDACTED]');
+            // Redact secrets unconditionally (S10), not only in GitHub Actions.
+            let out = value.replace(/(mongodb(?:\+srv)?:\/\/)[^\s'"]+/gi, '$1[REDACTED]');
+            out = out.replace(/\b(SESSION_ID\w*|MONGODB_URI|[A-Z_]*API_KEY)\s*=\s*[^\s'"]+/g, '$1=[REDACTED]');
+            out = out.replace(/\b\d{8,15}\b/g, n => n.slice(0, 3) + 'xxxxxx' + n.slice(-2));
             return out;
         }
         return value;
@@ -172,7 +176,7 @@ ${texts.footer}`;
 const Setting = mongoose.models.Setting || mongoose.model('Setting', new mongoose.Schema({
     key: { type: String, unique: true },
     value: mongoose.Schema.Types.Mixed,
-}, { collection: 'settings', autoIndex: false }));
+}, { collection: 'settings', autoIndex: true }));
 const SETTINGS_FILE = './data/settings.json';
 const dbOn = () => mongoose.connection.readyState === 1;
 let CALL_ON = config.autoCallDefault;
@@ -201,7 +205,9 @@ async function loadSettings() {
             CONNECT_IMAGE_URL = j.connectImageUrl || DEFAULT_CONNECT_IMAGE;
             MENU_IMAGE_URL = j.menuImageUrl || DEFAULT_MENU_IMAGE;
         }
-    } catch {}
+    } catch (e) {
+        console.log('Settings load error (running on defaults):', e?.message || e);
+    }
     await saveImageSettings();
     console.log('📞 Auto call:', CALL_ON ? 'ON' : 'OFF');
 }
@@ -213,7 +219,8 @@ async function setCallOn(v) {
             await Setting.findOneAndUpdate({ key: 'autoCall' }, { value: v }, { upsert: true });
         } else {
             fs.mkdirSync('./data', { recursive: true });
-            fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ autoCall: v, botMode: BOT_MODE }, null, 2));
+            const current = fs.existsSync(SETTINGS_FILE) ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) : {};
+            fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...current, autoCall: v, botMode: BOT_MODE }, null, 2));
         }
     } catch (e) { console.log('Settings save error:', e.message); }
 }
@@ -248,8 +255,16 @@ async function setBotMode(mode) {
 }
 
 // ================= MEDIA =================
+// Bounded LRU caches (P1): the old plain Maps grew forever — every decoded
+// media file stayed in RAM until the process OOMed.
+function lruSet(cache, key, value, maxEntries) {
+    cache.delete(key);
+    cache.set(key, value);
+    while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+}
 const pcmCache = new Map();
 const fileCache = new Map();
+const inflightPcm = new Map(); // url -> in-flight decode promise (dedupes concurrent decodes)
 const endedCalls = new Set();
 const waiters = new Map();
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -259,6 +274,8 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 async function downloadFile(url, file) {
     // A 403/401/404 is a permanent origin response, not a transient network
     // failure. Retrying it three times only spams logs and wastes call setup time.
+    // Streams straight to disk (P2) via the shared downloader — whole files
+    // are never buffered in RAM.
     const candidates = [url];
     if (url.startsWith('https://github.com/') && url.includes('/raw/')) {
         candidates.push(url.replace('https://github.com/', 'https://raw.githubusercontent.com/').replace('/raw/refs/heads/', '/refs/heads/'));
@@ -267,41 +284,17 @@ async function downloadFile(url, file) {
     let lastErr;
     for (const candidate of [...new Set(candidates)]) {
         for (let attempt = 1; attempt <= 3; attempt++) {
-            let response;
             try {
-                response = await fetch(candidate, {
-                    redirect: 'follow',
-                    // Do not send synthetic Origin/Referer or Range headers.
-                    // Some object-storage/CDN hosts reject server-side hotlink headers with 403.
-                    headers: {
-                        'User-Agent': UA,
-                        Accept: '*/*'
-                    },
-                    signal: AbortSignal.timeout(60000),
-                });
-
-                if ([401, 403, 404, 410].includes(response.status)) {
-                    throw Object.assign(new Error(`HTTP ${response.status} - media host denied access or the link is unavailable`), { permanent: true });
-                }
-                if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
-                }
-
-                const contentType = (response.headers.get('content-type') || '').toLowerCase();
-                const data = Buffer.from(await response.arrayBuffer());
-                if (!data.length) throw new Error('empty response');
-                if (data.length > 250 * 1024 * 1024) throw new Error('media exceeds 250 MB limit');
-                if (contentType.includes('text/html') || data.subarray(0, 100).toString('utf8').toLowerCase().includes('<!doctype html')) {
+                await downloadToFile(candidate, file, { timeoutMs: 60000 });
+                // Reject HTML pages masquerading as media (checked from disk).
+                const head = fs.readFileSync(file).subarray(0, 100).toString('utf8').toLowerCase();
+                if (head.includes('<!doctype html')) {
+                    fs.rmSync(file, { force: true });
                     throw Object.assign(new Error('host returned an HTML page instead of a media file'), { permanent: true });
                 }
-
-                const tempFile = file + '.part';
-                fs.writeFileSync(tempFile, data);
-                fs.renameSync(tempFile, file);
                 return;
             } catch (e) {
                 lastErr = e;
-                try { fs.rmSync(file + '.part', { force: true }); } catch {}
                 const permanent = e.permanent || /HTTP (401|403|404|410)/.test(e.message) || /HTML page instead of a media file/.test(e.message);
                 console.log(`⚠️ [MEDIA] Download ${permanent ? 'rejected' : 'failed'}: ${e.message}`);
                 if (permanent) {
@@ -316,6 +309,13 @@ async function downloadFile(url, file) {
 
 async function getPcm(url) {
     if (pcmCache.has(url)) return pcmCache.get(url);
+    if (inflightPcm.has(url)) return inflightPcm.get(url);
+    const promise = doGetPcm(url);
+    inflightPcm.set(url, promise);
+    try { return await promise; } finally { inflightPcm.delete(url); }
+}
+
+async function doGetPcm(url) {
     fs.mkdirSync(process.env.TMP_DIR || './tmp', { recursive: true });
 
     let file;
@@ -335,20 +335,24 @@ async function getPcm(url) {
         ff.stdout.on('data', d => chunks.push(d));
         ff.stderr.on('data', d => console.log('ffmpeg:', String(d).slice(0, 300)));
         ff.on('error', reject);
-        ff.on('close', (code) => { console.log('ffmpeg exit code:', code); resolve(Buffer.concat(chunks)); });
+        ff.on('close', (code) => {
+            console.log('ffmpeg exit code:', code);
+            if (code !== 0) return reject(new Error('ffmpeg exit ' + code));
+            resolve(Buffer.concat(chunks));
+        });
     });
 
     const pcm = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length));
     console.log('🎧 decoded samples:', pcm.length, `(~${(pcm.length / 16000).toFixed(1)}s)`);
-    fileCache.set(url, path.resolve(file));
-    if (pcm.length > 0) pcmCache.set(url, pcm);
+    lruSet(fileCache, url, path.resolve(file), MAX_FILE_CACHE_ENTRIES);
+    if (pcm.length > 0) lruSet(pcmCache, url, pcm, MAX_PCM_CACHE_ENTRIES);
     return pcm;
 }
 
 // unique, collision-free cache file name for a URL
 function cacheName(url) {
     const ext = (path.extname(new URL(url).pathname) || '.bin').slice(0, 8);
-    return './tmp/media_' + crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + ext;
+    return path.join(process.env.TMP_DIR || './tmp', 'media_' + crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + ext);
 }
 
 // does this file really contain a video stream?
@@ -366,8 +370,11 @@ function hasVideoStream(file) {
 // audio -> .ogg (Opus) | video -> .mp4 (H.264 baseline). Type is detected from real content, not the URL extension.
 async function prepareMedia(url, wantVideo) {
     const r = await prepareConverted(url, { wantVideo, maxSeconds: 900 });
+    // Validate the converted file on the real media path (Q1 — validateMediaFile
+    // was imported but never called, so the security module was dead code).
+    try { await validateMediaFile(r.file); } catch (e) { throw new Error('Media validation failed: ' + e.message); }
     console.log(`🎛️ [MEDIA] converted → ${r.kind}: ${path.basename(r.file)} (${r.duration.toFixed(1)}s)`);
-    return { file: r.file, kind: r.kind, ogg: r.ogg, duration: r.duration };
+    return { file: r.file, kind: r.kind, duration: r.duration };
 }
 
 // real duration of a media file in ms (0 if unknown)
@@ -601,9 +608,19 @@ async function getSavedSession() {
 
 async function restoreSession(st) {
     if (!st) return false;
+    validateSessionDir(SESSION_DIR);
     fs.rmSync(SESSION_DIR, { recursive: true, force: true });
     fs.mkdirSync(SESSION_DIR, { recursive: true });
-    for (const f in st.data) fs.writeFileSync(path.join(SESSION_DIR, f), st.data[f]);
+    // Decrypt the session envelope if it was stored encrypted (S6).
+    let data = st.data;
+    try { data = decryptSessionData(st.data); } catch (e) { console.log('❌ Session decrypt error:', e.message); return false; }
+    // Sanitise filenames from MongoDB: only basenames ending in .json are
+    // written, so a poisoned record can never path-traverse out of SESSION_DIR.
+    for (const f in data) {
+        const name = path.basename(String(f));
+        if (!name.endsWith('.json') || name !== String(f)) continue;
+        fs.writeFileSync(path.join(SESSION_DIR, name), data[f]);
+    }
     console.log('✅ Session restored from MongoDB');
     return true;
 }
@@ -622,9 +639,12 @@ async function saveSession() {
         // Avoid hammering MongoDB while credentials are rotating rapidly.
         if (Date.now() - lastSaveAt < 10000) { debouncedSave(); return; }
         saveInFlight = true;
+        // Encrypt the session at rest in MongoDB (S6); plaintext only when
+        // SESSION_ENCRYPTION_KEY is unset, with a warning logged by the helper.
+        const stored = encryptSessionData(data);
         await Session.findOneAndUpdate(
             { sessionId: SESSION_KEY },
-            { $set: { data, src: CURRENT_SRC, updatedAt: new Date() } },
+            { $set: { data: stored, src: CURRENT_SRC, updatedAt: new Date() } },
             { upsert: true, setDefaultsOnInsert: true }
         );
         lastSavedDigest = digest;
@@ -647,6 +667,7 @@ const debouncedSave = () => {
 };
 
 async function wipeSession() {
+    validateSessionDir(SESSION_DIR);
     fs.rmSync(SESSION_DIR, { recursive: true, force: true });
     fs.rmSync(SESSION_SRC, { force: true });
     if (dbOn()) await Session.deleteOne({ sessionId: SESSION_KEY }).catch(() => {});
@@ -759,7 +780,10 @@ async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
             console.log('⏭️ Incoming call ended before media preparation completed:', callId);
             return;
         }
-        const pcm = await getPcm(prepared.file);
+        const pcm = await Promise.race([
+            getPcm(prepared.file),
+            sleep(PRE_DECODE_DEADLINE_MS).then(() => { throw new Error('Media decode exceeded the 10s pre-decode deadline'); }),
+        ]);
         if (!pcm.length) throw new Error('Media decoded to zero audio samples.');
         if (isVideo) {
             const localVideo = fileCache.get(prepared.file);
@@ -925,10 +949,12 @@ async function handleDial(sock, m, kind, rawArgs, reply) {
     const label = kind === 'video' ? 'Video' : 'Audio';
     const cmd = kind === 'video' ? 'vcall' : 'acall';
     const input = rawArgs.join(' ').trim();
-    // numbers first, then an optional media link (any audio/video link, any extension)
+    // Strip the media URL FIRST, then parse numbers from the remainder (L9):
+    // a URL's digits (ports, paths, query strings) must never be mistaken
+    // for phone numbers.
     const urlMatch = input.match(/https?:\/\/\S+/i);
     const url = urlMatch?.[0];
-    const numberPart = (urlMatch ? input.slice(0, urlMatch.index) : input).trim();
+    const numberPart = url ? input.replace(url, ' ').trim() : input;
     const numbers = [...new Set([...numberPart.matchAll(/\+?\d[\d\s-]{6,17}\d/g)].map(x => clean(x[0])))];
     const residue = numberPart.replace(/[()+\s,;\d-]/g, '');
     if (residue || numbers.length < 1 || numbers.length > MAX_CONCURRENT_CALLS || numbers.some(n => n.length < 8 || n.length > 15)) {
@@ -953,10 +979,22 @@ ${texts.footer}`);
     catch (e) { return reply(`❌ Media error: ${e.message}\n\n${texts.footer}`); }
 
     // Same converted file is reused for every number (converted only once).
-    const results = await Promise.allSettled(numbers.map(number => dialPrepared(kind, number, prepared)));
-    const lines = results.map((r, i) => r.status === 'fulfilled'
-        ? `✅ +${numbers[i]} — ringing`
-        : `❌ +${numbers[i]} — ${r.reason?.message || 'Call failed'}`);
+    // Dial sequentially with a 30s slot timeout per number (L10) and report
+    // progress as each number is reached, so a stuck slot does not leave the
+    // owner guessing which numbers were dialled.
+    const lines = [];
+    for (const number of numbers) {
+        try {
+            await Promise.race([
+                dialPrepared(kind, number, prepared),
+                sleep(VOIP_SLOT_TIMEOUT_MS).then(() => { throw new Error('Call slot wait timed out after 30s'); }),
+            ]);
+            lines.push(`✅ +${number} — ringing`);
+        } catch (e) {
+            lines.push(`❌ +${number} — ${e?.message || 'Call failed'}`);
+        }
+        await reply(`📞 ${label} calls — progress ${lines.length}/${numbers.length}\n${lines.join('\n')}`);
+    }
     await reply(`╭━━〔 ✦ ${label.toUpperCase()} CALLS 〕━━╮\n${lines.join('\n')}\n╰━━━━━━━━━━━━━━━━━━╯\n${texts.footer}`);
 }
 
@@ -992,18 +1030,7 @@ async function loadPlugins() {
 }
 
 // ================= COMMANDS =================
-function unwrapMessage(message) {
-    let current = message || {};
-    for (let i = 0; i < 5; i++) {
-        const next = current.ephemeralMessage?.message ||
-            current.documentWithCaptionMessage?.message ||
-            current.viewOnceMessage?.message ||
-            current.viewOnceMessageV2?.message;
-        if (!next) break;
-        current = next;
-    }
-    return current;
-}
+// unwrapMessage lives in lib/unwrap.js (single shared copy, Q4).
 
 function extractCommandText(message) {
     const current = unwrapMessage(message);
@@ -1040,7 +1067,6 @@ function senderNumbers(m) {
 // Recent message cache: WhatsApp strips url/mediaKey/directPath from QUOTED media,
 // so plugins (.vv / .link) need the ORIGINAL message the bot received earlier.
 const MSG_CACHE = new Map();
-const MSG_CACHE_MAX = 1500;
 function cacheMessage(m) {
     const id = m?.key?.id;
     if (!id || !m.message) return;
@@ -1057,25 +1083,6 @@ async function handleCommand(sock, m) {
     const trimmed = String(body || '').trim();
     const jid = m.key.remoteJid;
     if (!jid || jid === 'status@broadcast') return;
-
-    // Allow plain numeric replies to continue CineSubz selection sessions.
-    if (trimmed && !trimmed.toLowerCase().startsWith(prefix)) {
-        const cinesubz = PLUGIN_MAP.get('cz') || PLUGIN_MAP.get('cinesubz');
-        if (cinesubz && typeof cinesubz.onMessage === 'function') {
-            const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
-            try {
-                const handled = await cinesubz.onMessage({
-                    sock, m, jid, config, prefix, reply, text: trimmed,
-                    args: [], isOwner: !!m.key.fromMe,
-                    state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
-                });
-                if (handled) return;
-            } catch (error) {
-                console.log('[CINESUBZ REPLY ROUTER]', error?.message || error);
-            }
-        }
-        return;
-    }
 
     // Keep URLs case-sensitive; normalize only the command name.
     const parts = trimmed.slice(prefix.length).trim().split(/\s+/);
@@ -1128,6 +1135,27 @@ async function handleCommand(sock, m) {
         || (BOT_MODE === 'inbox' && !isGroupChat)
         || (BOT_MODE === 'group' && isGroupChat)
         || BOT_MODE === 'self';
+
+    // Numeric replies to a CineSubz selection must be routed BEFORE the
+    // mode/owner gate (C3): in self mode a non-owner's plain "2" reply was
+    // dropped here, so the selection session could never complete.
+    if (trimmed && !trimmed.toLowerCase().startsWith(prefix)) {
+        const cinesubz = PLUGIN_MAP.get('cz') || PLUGIN_MAP.get('cinesubz');
+        if (cinesubz && typeof cinesubz.onMessage === 'function') {
+            const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
+            try {
+                const handled = await cinesubz.onMessage({
+                    sock, m, jid, config, prefix, reply, text: trimmed,
+                    args: [], isOwner: !!m.key.fromMe,
+                    state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
+                });
+                if (handled) return;
+            } catch (error) {
+                console.log('[CINESUBZ REPLY ROUTER]', error?.message || error);
+            }
+        }
+        return;
+    }
 
     // Self mode: silently ignore non-owner commands.
     if (!inAllowedChat || (BOT_MODE === 'self' && !isOwner)) return;
@@ -1222,7 +1250,7 @@ function startServer() {
     if (process.env.DISABLE_SERVER === 'true') return;
     const app = express();
     app.get('/', (req, res) => res.send(`${config.botName} is running ✅`));
-    app.listen(config.port, () => console.log(`🌐 Server running on port ${config.port}`));
+    app.listen(config.port, '127.0.0.1', () => console.log(`🌐 Server running on 127.0.0.1:${config.port}`));
 }
 
 // ================= START =================
@@ -1393,8 +1421,10 @@ async function start() {
     });
 }
 
-process.on('uncaughtException', (e) => console.log('Uncaught exception:', e?.message ?? e));
-process.on('unhandledRejection', (e) => console.log('Unhandled rejection:', e?.message ?? e));
+// A fatal error must kill the process (C2) so the supervisor restarts it
+// visibly instead of the bot silently running dead.
+process.on('uncaughtException', (e) => { console.log('Uncaught exception:', e?.message ?? e); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.log('Unhandled rejection:', e?.message ?? e); process.exit(1); });
 
 console.log(`🚀 ${config.botName} v${config.version}`);
 
@@ -1449,4 +1479,4 @@ if (!haveSession) {
 await loadSettings();
 await loadPlugins();
 startServer();
-start();
+start().catch((e) => { console.error('❌ Fatal startup error:', e?.message || e); process.exit(1); });
