@@ -21,7 +21,7 @@ async function api(path, params = {}) {
     return j;
 }
 const numbered = (a, fn, max = 15) => a.slice(0,max).map((x,i)=>(i+1)+'. '+fn(x)).join('\n');
-function help(p) { return ['╭━━〔 🎬 CINESUBZ 〕━━╮','','🔎 '+p+'cs Deadpool','🎞️ '+p+'movie Avatar','📺 '+p+'tv Loki','','➡️ Open result: '+p+'cs 1','📺 Open episode: '+p+'cs ep 1','⬇️ Download link: '+p+'cs dl 1','⏮️ '+p+'cs prev | ⏭️ '+p+'cs next','','Selection expires in 20 minutes.','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'].join('\n'); }
+function help(p) { return ['╭━━〔 🎬 CINESUBZ 〕━━╮','','🔎 '+p+'cs Deadpool','🎞️ '+p+'cs movie Avatar','📺 '+p+'cs tv Loki','','➡️ Open result: '+p+'cs 1','📺 Open episode: '+p+'cs ep 1','⬇️ Download link: '+p+'cs dl 1','⏮️ '+p+'cs prev | ⏭️ '+p+'cs next','','Selection expires in 20 minutes.','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'].join('\n'); }
 function movieInfo(d) {
     const a=['╭━━〔 🎬 MOVIE DETAILS 〕━━╮','','🎞️ *'+clean(d.title,170)+'*','📅 Year: '+clean(d.year||'N/A',25),'⭐ IMDb ID: '+clean(d.imdbId||'N/A',25),'🎥 Quality: '+clean(d.quality||'N/A',30),'⏱️ Duration: '+clean(d.duration||'N/A',30),'🌍 Country: '+clean(d.country||'N/A',45),'🎬 Director: '+clean(d.director||'N/A',150),'📝 Subtitles: '+clean(d.subtitleBy||'N/A',90)];
     if(d.genres?.length)a.push('🏷️ Genres: '+d.genres.map(x=>clean(x,30)).join(', '));
