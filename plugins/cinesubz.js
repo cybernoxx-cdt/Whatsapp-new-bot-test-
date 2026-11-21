@@ -1,5 +1,5 @@
 // CineSubz plugin for GOD VOIP MD
-// Commands: .cs <query>, .movie <query>, .tv <query>
+// Commands: .cs <query> / .cz <query>; .cs movie <query>; .cs tv <query>
 // Flow: .cs 1 opens a result; .cs ep 1 opens an episode; .cs dl 1 resolves a download.
 const BASE = 'https://mochi-apis.koyeb.app/api/movie/cinesubz';
 // Shared Mochi API credential. DNUZ_API_KEY remains a backward-compatible fallback.
@@ -28,7 +28,7 @@ function movieInfo(d) {
     if(d.genres?.length)a.push('🏷️ Genres: '+d.genres.map(x=>clean(x,30)).join(', '));
     if(d.cast?.length)a.push('','*CAST*',...d.cast.slice(0,6).map(x=>'• '+clean(x.name,50)+' — '+clean(x.role||'',60)));
     if(d.description)a.push('','*DESCRIPTION*',clean(d.description,900));
-    if(d.downloadLinks?.length)a.push('','*DOWNLOAD OPTIONS*',numbered(d.downloadLinks,x=>clean(x.info||x.quality||x.link,120),10),'','Download with: .cs dl 1');
+    if(d.downloadLinks?.length)a.push('','*DOWNLOAD OPTIONS*',numbered(d.downloadLinks,x=>clean(x.info||x.quality||x.link,120),10),'','Download with: .cz dl 1');
     a.push('','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); return a.join('\n');
 }
 function tvInfo(d) {
@@ -36,14 +36,14 @@ function tvInfo(d) {
     const a=['╭━━〔 📺 TV SHOW DETAILS 〕━━╮','','📺 *'+clean(d.title,160)+'*','📅 Year: '+clean(d.year||'N/A',20),'⭐ IMDb: '+clean(d.imdbRating||'N/A',20),'🆔 IMDb ID: '+clean(d.imdbId||'N/A',25)];
     if(d.genres?.length)a.push('🏷️ Genres: '+d.genres.map(x=>clean(x,30)).join(', '));
     if(d.cast?.length)a.push('','*CAST*',...d.cast.slice(0,5).map(x=>'• '+clean(x.name,50)+' — '+clean(x.role||'',60)));
-    if(eps.length)a.push('','*EPISODES ('+eps.length+')*',numbered(eps,e=>'S'+e.season_no+' E'+e.episode_no+' — '+clean(e.title,80),40),'','Open episode: .cs ep 1');
+    if(eps.length)a.push('','*EPISODES ('+eps.length+')*',numbered(eps,e=>'S'+e.season_no+' E'+e.episode_no+' — '+clean(e.title,80),40),'','Open episode: .cz ep 1');
     a.push('','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); return { text:a.join('\n'), eps };
 }
 function episodeInfo(d) {
     const a=['╭━━〔 📺 EPISODE DETAILS 〕━━╮','','🎬 *'+clean(d.title||'Episode',140)+'*','📺 Show: '+clean(d.show_name||'N/A',80),'📅 Year: '+clean(d.year||'N/A',20),'⭐ Rating: '+clean(d.rating||'N/A',20)];
     if(d.description&&d.description!=='N/A')a.push('',clean(d.description,500));
     if(d.dl_links?.length)a.push('','*DOWNLOAD QUALITIES*',numbered(d.dl_links,x=>clean(x.info||x.link,120),10),'','Download with: .cs dl 1');
-    if(d.nav?.previous_episode)a.push('','Previous: .cs prev'); if(d.nav?.next_episode)a.push('Next: .cs next');
+    if(d.nav?.previous_episode)a.push('','Previous: .cz prev'); if(d.nav?.next_episode)a.push('Next: .cz next');
     a.push('','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); return a.join('\n');
 }
 async function search(c,q,filter='all') {
@@ -53,7 +53,7 @@ async function search(c,q,filter='all') {
     const items=[...(d.movies||[]).map(x=>({...x,kind:'movie'})),...(d.tvshows||[]).map(x=>({...x,kind:'tv'}))].filter(x=>valid(x.url)).slice(0,15);
     if(!items.length)return c.reply('😕 Results හමු වුණේ නැහැ. වෙනත් keyword එකක් try කරන්න.');
     set(c,{mode:'search',items});
-    return c.reply(['╭━━〔 🎬 CINESUBZ RESULTS 〕━━╮','','🔎 Query: *'+clean(j.query||q,100)+'*','📦 Results: '+items.length,'',numbered(items,x=>(x.kind==='tv'?'📺 TV | ':'🎬 Movie | ')+clean(x.title,130)+(x.rating?' ⭐ '+clean(x.rating,8):'')),'','Select: '+c.prefix+'cs 1','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'].join('\n'));
+    return c.reply(['╭━━〔 🎬 CINESUBZ RESULTS 〕━━╮','','🔎 Query: *'+clean(j.query||q,100)+'*','📦 Results: '+items.length,'',numbered(items,x=>(x.kind==='tv'?'📺 TV | ':'🎬 Movie | ')+clean(x.title,130)+(x.rating?' ⭐ '+clean(x.rating,8):'')),'','Select: '+c.prefix+'cz 1','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'].join('\n'));
 }
 async function openMovie(c,x) {
     await c.reply('🎬 Movie details load කරනවා...');
@@ -81,19 +81,19 @@ async function download(c,s,n) {
     a.push('','Signed download URL expire විය හැකියි.','> ✦ GOD VOIP MD','╰━━━━━━━━━━━━━━━━━━━━╯'); await c.reply(a.join('\n'));
 }
 export default {
-    name:'cinesubz', aliases:['cs','cinesearch'],
+    name:'cinesubz', aliases:['cs','cz','cinesearch'],
     desc:'Search CineSubz movies, TV shows, episodes and download links',
     ownerOnly:false,
     async run(c) {
         const raw=clean(c.text||'',350),p=raw.split(/\s+/).filter(Boolean),first=(p[0]||'').toLowerCase();
         try {
-            if(!KEY)return c.reply('❌ CINESUBZ_API_KEY GitHub Secret එක configure කරලා නැහැ.');
+            if(!KEY)return c.reply('❌ MOCHI_API_KEY GitHub Secret එක configure කරලා නැහැ.');
             if(!raw||first==='help'||first==='menu')return c.reply(help(c.prefix));
             if(first==='movie'||first==='movies')return search(c,p.slice(1).join(' '),'movies');
             if(first==='tv'||first==='show'||first==='tvshow')return search(c,p.slice(1).join(' '),'tvshows');
             if(first==='search')return search(c,p.slice(1).join(' '));
             const s=get(c);
-            if(first==='dl'||first==='download') {const n=Number(p[1]);if(!s||!['movie','episode'].includes(s.mode))return c.reply('⚠️ Movie/Episode details open කරන්න.');if(!Number.isInteger(n)||n<1)return c.reply('Usage: .cs dl 1');return download(c,s,n-1);}
+            if(first==='dl'||first==='download') {const n=Number(p[1]);if(!s||!['movie','episode'].includes(s.mode))return c.reply('⚠️ Movie/Episode details open කරන්න.');if(!Number.isInteger(n)||n<1)return c.reply('Usage: .cz dl 1');return download(c,s,n-1);}
             if(first==='ep'||first==='episode') {const n=Number(p[1]);if(!s||s.mode!=='tv')return c.reply('⚠️ මුලින් TV show එකක් open කරන්න.');if(!Number.isInteger(n)||n<1||n>s.eps.length)return c.reply('Episode number එක 1-'+s.eps.length+' අතරින් දෙන්න.');return openEpisode(c,s.eps[n-1]);}
             if(first==='next'||first==='prev'||first==='previous') {if(!s||s.mode!=='episode')return c.reply('⚠️ Episode එකක් open කරන්න.');const u=first==='next'?s.data?.nav?.next_episode:s.data?.nav?.previous_episode;if(!valid(u))return c.reply('ℹ️ තවත් episode එකක් නැහැ.');return openEpisode(c,{url:u});}
             if(/^\d+$/.test(first)) {const n=Number(first);if(!s)return c.reply('⚠️ Search session expire වෙලා. නැවත search කරන්න.');if(s.mode==='search'){if(n<1||n>s.items.length)return c.reply('Result number එක 1-'+s.items.length+' අතරින් දෙන්න.');const x=s.items[n-1];return x.kind==='tv'?openTv(c,x):openMovie(c,x);}if(s.mode==='tv'){if(n<1||n>s.eps.length)return c.reply('Episode number එක 1-'+s.eps.length+' අතරින් දෙන්න.');return openEpisode(c,s.eps[n-1]);}if(s.mode==='movie'||s.mode==='episode')return download(c,s,n-1);}
