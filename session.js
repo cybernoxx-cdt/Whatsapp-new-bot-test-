@@ -7,6 +7,49 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import os from 'os';
+
+// Refuse destructive deletes on dangerous paths (S7): SESSION_DIR comes
+// from the environment, so a typo like '.' or '/' must never wipe the
+// project, the home directory, or the filesystem root.
+export function validateSessionDir(dir) {
+    const resolved = path.resolve(dir || '');
+    const home = path.resolve(os.homedir());
+    const projectRoot = path.resolve(process.cwd());
+    if (resolved === path.parse(resolved).root || resolved === home || resolved === projectRoot) {
+        throw new Error(`Refusing to use SESSION_DIR '${resolved}': it must be a dedicated session directory, not /, the home directory, or the project root.`);
+    }
+    return resolved;
+}
+
+// AES-256-GCM session encryption at rest (S6). Key from env only;
+// without a key the session is stored in plaintext with a loud warning.
+function encryptionKey() {
+    const raw = process.env.SESSION_ENCRYPTION_KEY || '';
+    if (!raw) return null;
+    const buf = Buffer.from(raw, 'base64');
+    if (buf.length !== 32) throw new Error('SESSION_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
+    return buf;
+}
+export function encryptSessionData(data) {
+    const key = encryptionKey();
+    if (!key) { console.log('⚠️ SESSION_ENCRYPTION_KEY is not set — session data is stored unencrypted in MongoDB.'); return { __plaintext: true, data }; }
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(data), 'utf8'), cipher.final()]);
+    return { __encrypted: true, iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: ciphertext.toString('base64') };
+}
+export function decryptSessionData(stored) {
+    if (!stored || typeof stored !== 'object') return stored;
+    if (stored.__plaintext) return stored.data;
+    if (!stored.__encrypted) return stored;
+    const key = encryptionKey();
+    if (!key) throw new Error('Session data is encrypted but SESSION_ENCRYPTION_KEY is not set.');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(stored.iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(stored.tag, 'base64'));
+    const plain = Buffer.concat([decipher.update(Buffer.from(stored.data, 'base64')), decipher.final()]);
+    return JSON.parse(plain.toString('utf8'));
+}
 
 const SESSION_DIR = process.env.SESSION_DIR || (fs.existsSync('./auth_baileys/creds.json') ? './auth_baileys' : './session');
 const SRC_FILE = path.join(SESSION_DIR, '.session.src');
@@ -38,6 +81,7 @@ function tryBase64Json(text) {
 }
 
 function writeSessionFiles(obj) {
+    validateSessionDir(SESSION_DIR);
     fs.rmSync(SESSION_DIR, { recursive: true, force: true });
     fs.mkdirSync(SESSION_DIR, { recursive: true });
     if (obj && obj.noiseKey && obj.signedIdentityKey) {
@@ -85,12 +129,12 @@ async function resolve(raw) {
     }
 
     throw new Error(
-        'Session ID එක හඳුනාගන්න බෑ (' + s.slice(0, 12) + '…). Base64 / creds.json content / MEGA link එකක් දාන්න. ' +
+        'Session ID එක හඳුනාගන්න බෑ. Base64 / creds.json content / MEGA link එකක් දාන්න. ' +
         'කෙටි id (xxxx=abc123) support නෑ.'
     );
 }
 
-export const sessionHash = (raw) => raw ? crypto.createHash('sha1').update(normalize(raw)).digest('hex') : '';
+export const sessionHash = (raw) => raw ? crypto.createHash('sha256').update(normalize(raw)).digest('hex') : '';
 
 export async function loadSession(raw) {
     if (!raw) throw new Error('SESSION ID එක config.js එකේ (sessionId) දාලා නෑ.');
