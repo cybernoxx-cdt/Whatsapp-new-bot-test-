@@ -4,13 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 */5 * * *"
 
 # Prevent two runners from using the same WhatsApp session simultaneously.
 concurrency:
   group: whatsapp-bot-main
-  cancel-in-progress: true
+  cancel-in-progress: false  # never kill a running bot to start a new one (P8)
 
 permissions:
   contents: read
@@ -27,9 +25,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --omit=dev --no-audit --no-fund
+        run: npm ci
 
       - name: Validate source syntax and security module
         run: |
@@ -60,8 +59,7 @@ jobs:
             echo "::warning::No SESSION_ID or SESSION_ID_1 secret found. Add at least one valid session."
           fi
           if [ -z "$MOCHI_API_KEY" ] && [ -z "$DNUZ_API_KEY" ]; then
-            echo "::error::Missing MOCHI_API_KEY or DNUZ_API_KEY GitHub Secret. Add the existing Mochi API key as DNUZ_API_KEY (or MOCHI_API_KEY)."
-            exit 1
+            echo "::warning::MOCHI_API_KEY / DNUZ_API_KEY is not set — CineSubz will be unavailable, but the bot will still start."
           fi
           echo "✅ Configuration validated"
 
