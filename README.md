@@ -1,6 +1,21 @@
 # GOD VOIP MD
 
-WhatsApp VoIP bot using `@dnuzi/baileys` 0.1.2.
+> **Runtime:** Node.js 20 · Baileys fork `@dnuzi/baileys@0.1.3` (pinned — do not upgrade without re-testing call handling).
+> **Call limit:** at most 10 concurrent calls (`MAX_CONCURRENT_CALLS`); the limit is a hard cap and cannot exceed 50.
+> **MongoDB:** `MONGODB_URI` is required for session persistence on GitHub Actions; without it the bot cannot save its session and will need re-pairing after every restart.
+> **Env:** copy `.env.example` to `.env` and fill in the required secrets — never commit real secrets.
+
+> **Runtime:** Node.js 20 · Baileys fork `@dnuzi/baileys@0.1.3` (pinned — do not upgrade without re-testing call handling).
+> **Call limit:** at most 10 concurrent calls (`MAX_CONCURRENT_CALLS`); the limit is a hard cap and cannot exceed 50.
+> **MongoDB:** `MONGODB_URI` is required for session persistence on GitHub Actions; without it the bot cannot save its session and will need re-pairing after every restart.
+> **Env:** copy `.env.example` to `.env` and fill in the required secrets — never commit real secrets.
+
+> **Runtime:** Node.js 20 · Baileys fork `@dnuzi/baileys@0.1.3` (pinned — do not upgrade without re-testing call handling).
+> **Call limit:** at most 10 concurrent calls (`MAX_CONCURRENT_CALLS`); the limit is a hard cap and cannot exceed 50.
+> **MongoDB:** `MONGODB_URI` is required for session persistence on GitHub Actions; without it the bot cannot save its session and will need re-pairing after every restart.
+> **Env:** copy `.env.example` to `.env` and fill in the required secrets — never commit real secrets.
+
+WhatsApp VoIP bot using `@dnuzi/baileys` 0.1.3.
 
 ## Commands
 

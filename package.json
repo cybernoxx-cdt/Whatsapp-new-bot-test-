@@ -1,12 +1,15 @@
 {
   "name": "god-voip-md",
   "version": "1.0.0",
-  "description": "GOD VOIP MD - WhatsApp VoIP bot with validated media handling and defensive media security.",
+  "description": "GOD VOIP MD - WhatsApp VoIP bot with validated media handling and defensive media security. Media is validated with ffprobe before use.",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node multi-session.js",
-    "security-check": "find . -path './node_modules' -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check"
+    "syntax-check": "find . -path './node_modules' -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "security-check": "node scripts/security-check.mjs",
+    "test": "node --test",
+    "lint": "eslint ."
   },
   "keywords": [
     "whatsapp",
@@ -31,5 +34,8 @@
     "sharp": "^0.34.5",
     "megajs": "^1.3.0",
     "mongoose": "^8.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
   }
 }
