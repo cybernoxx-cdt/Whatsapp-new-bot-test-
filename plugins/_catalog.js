@@ -121,7 +121,7 @@ export function createCatalogPlugin({ name, aliases = [], description, base, sea
           if (totalPages && page >= totalPages) break;
           if (pageItems.length < 10) break;
         }
-        const terms = query.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim().split(/\\s+/).filter(Boolean);
+        const terms = query.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
         const ranked = pages.map((item, index) => {
           const title = String(item?.title || item?.name || item?.gameName || item?.appName || '');
           const haystack = [title, item?.description, item?.category, item?.genre, item?.platform].filter(Boolean).join(' ').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ');
