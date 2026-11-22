@@ -23,6 +23,59 @@ async function api(base, endpoint, params = {}) {
   return data.data && typeof data.data === 'object' ? data.data : data;
 }
 const keyFor = c => getPluginSessionKey(c);
+
+const MAX_CATALOG_FILE_BYTES = 200 * 1024 * 1024;
+function safeFileName(value, fallback = 'download.bin') {
+  const name = clean(value || fallback, 150).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim();
+  return name || fallback;
+}
+function filenameFromHeaders(disposition = '') {
+  const utf8 = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8) { try { return decodeURIComponent(utf8[1].replace(/^["']|["']$/g, '')); } catch {} }
+  const plain = disposition.match(/filename="?([^";]+)"?/i);
+  return plain?.[1] || '';
+}
+async function downloadCatalogFile(url, suggestedName) {
+  if (!validHttps(url)) throw new Error('Download URL must use HTTPS.');
+  const response = await fetch(url, {
+    headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36', accept: '*/*' },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(180000)
+  });
+  if (!response.ok) throw new Error('File host returned HTTP ' + response.status);
+  const finalUrl = new URL(response.url || url);
+  if (finalUrl.protocol !== 'https:') throw new Error('File host redirected to an unsafe URL.');
+  const type = (response.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim().toLowerCase();
+  if (type.includes('text/html') || type.includes('application/json')) throw new Error('The download host returned a webpage/API response, not the actual file.');
+  const declared = Number(response.headers.get('content-length') || 0);
+  if (declared > MAX_CATALOG_FILE_BYTES) throw new Error('File is larger than the 200 MB WhatsApp delivery limit.');
+  if (!response.body) throw new Error('The download host returned an empty response.');
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of response.body) {
+    const part = Buffer.from(chunk);
+    total += part.length;
+    if (total > MAX_CATALOG_FILE_BYTES) throw new Error('File exceeded the 200 MB WhatsApp delivery limit while downloading.');
+    chunks.push(part);
+  }
+  if (!total) throw new Error('Downloaded file is empty.');
+  const dispositionName = filenameFromHeaders(response.headers.get('content-disposition') || '');
+  const pathName = decodeURIComponent(finalUrl.pathname.split('/').pop() || '');
+  const fileName = safeFileName(dispositionName || suggestedName || pathName, 'download.bin');
+  return { buffer: Buffer.concat(chunks, total), fileName, mimetype: type || 'application/octet-stream', size: total };
+}
+async function sendCatalogFile(ctx, url, title, suggestedName) {
+  await ctx.sock.sendMessage(ctx.jid, { react: { text: '⬇️', key: ctx.m.key } }).catch(() => {});
+  const file = await downloadCatalogFile(url, suggestedName);
+  await ctx.sock.sendMessage(ctx.jid, {
+    document: file.buffer,
+    mimetype: file.mimetype,
+    fileName: file.fileName,
+    caption: `╭━━〔 ✦ GOD VOIP MD 〕━━╮\\n\\n📦 *${clean(title, 140)}*\\n💾 *Size:* ${(file.size / 1048576).toFixed(1)} MB\\n✅ File downloaded and attached.\\n\\n✦ GOD VOIP MD`
+  }, { quoted: ctx.m });
+  return file;
+}
+
 function save(c, value) {
   const key = keyFor(c);
   sessions.set(key, { ...value, at: Date.now() });
@@ -113,7 +166,13 @@ export function createCatalogPlugin({ name, aliases = [], description, base, sea
         const downloadUrl = dl.downloadUrl || dl.url || dl.link;
         if (!validHttps(downloadUrl)) throw new Error('The API did not return a valid HTTPS download link.');
         save(ctx, { step: 'done', items: [], mode });
-        await ctx.reply(`╭━━〔 ✦ GOD VOIP MD 〕━━╮\n\n📦 *${title}*\n${info.version ? '🔖 Version: ' + clean(info.version, 50) + '\n' : ''}${info.size ? '💾 Size: ' + clean(info.size, 40) + '\n' : ''}\n⬇️ *Download link:*\n${downloadUrl}\n\n⚠️ Install APKs only from sources you trust.\n✦ GOD VOIP MD`);
+        const suggestedName = info.fileName || info.filename || item.fileName || item.filename || (title.replace(/[^a-z0-9._-]+/gi, '_') + (mode === 'modgame' ? '.apk' : '.apk'));
+        try {
+          await sendCatalogFile(ctx, downloadUrl, title, suggestedName);
+          await ctx.sock.sendMessage(ctx.jid, { react: { text: '✅', key: ctx.m.key } }).catch(() => {});
+        } catch (fileError) {
+          await ctx.reply(`⚠️ *File delivery failed:* ${clean(fileError.message, 220)}\\n\\n⬇️ *Direct download link:*\\n${downloadUrl}\\n\\n⚠️ Install APKs only from sources you trust.\\n✦ GOD VOIP MD`);
+        }
         return true;
       } catch (e) { await ctx.reply(`⚠️ Could not load this result: ${clean(e.message, 220)}`); return true; }
     }
@@ -150,7 +209,14 @@ export function createCatalogPlugin({ name, aliases = [], description, base, sea
         const downloadUrl = dl.downloadUrl || dl.url || dl.link;
         if (!validHttps(downloadUrl)) throw new Error('The API did not return a valid HTTPS download link.');
         save(ctx, { ...s, step: 'done' });
-        await ctx.reply(`╭━━〔 🎮 OLD PC GAME 〕━━╮\n\n🎯 *${clean(s.title, 140)}*\n🕹️ Platform: ${clean(s.selectedPlatform?.name || s.selectedPlatform?.title || s.selectedPlatform?.platform || 'Selected', 80)}\n📁 File: ${clean(file.fileName || file.name || file.title || 'Game file', 120)}\n${file.size ? '💾 Size: ' + clean(file.size, 40) + '\n' : ''}\n⬇️ *Download:*\n${downloadUrl}\n\n✦ GOD VOIP MD`);
+        const gameTitle = clean(s.title, 140);
+        const gameFileName = file.fileName || file.filename || file.name || file.title || gameTitle.replace(/[^a-z0-9._-]+/gi, '_');
+        try {
+          await sendCatalogFile(ctx, downloadUrl, gameTitle, gameFileName);
+          await ctx.sock.sendMessage(ctx.jid, { react: { text: '✅', key: ctx.m.key } }).catch(() => {});
+        } catch (fileError) {
+          await ctx.reply(`⚠️ *Game file delivery failed:* ${clean(fileError.message, 220)}\\n\\n⬇️ *Direct download:*\\n${downloadUrl}\\n\\n✦ GOD VOIP MD`);
+        }
       } catch (e) { await ctx.reply(`⚠️ Download lookup failed: ${clean(e.message, 220)}`); }
       return true;
     }
