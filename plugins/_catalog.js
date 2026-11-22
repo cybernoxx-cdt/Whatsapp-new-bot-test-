@@ -5,6 +5,7 @@ const sessions = new Map();
 const clean = (v, max = 180) => String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 const list = value => Array.isArray(value) ? value : [];
 const pickArray = (obj, keys) => {
+  if (Array.isArray(obj)) return obj;
   for (const key of keys) if (Array.isArray(obj?.[key])) return obj[key];
   return [];
 };
