@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  # Start a fresh runner every four hours. The concurrency group below
+  # cancels the previous runner so only one WhatsApp session is active.
+  schedule:
+    - cron: "0 */4 * * *"
 
 # Prevent two runners from using the same WhatsApp session simultaneously.
 concurrency:
