@@ -1,4 +1,5 @@
 // GOD VOIP MD catalog search helper. API responses are treated as untrusted data.
+import { getPluginSessionKey } from '../lib/plugin-session.js';
 const TTL = 15 * 60 * 1000;
 const sessions = new Map();
 const clean = (v, max = 180) => String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -20,7 +21,7 @@ async function api(base, endpoint, params = {}) {
   }
   return data.data && typeof data.data === 'object' ? data.data : data;
 }
-const keyFor = c => String(c.jid) + '|' + String(c.m?.key?.participantAlt || c.m?.key?.participant || c.m?.key?.remoteJidAlt || c.jid);
+const keyFor = c => getPluginSessionKey(c);
 function save(c, value) {
   const key = keyFor(c);
   sessions.set(key, { ...value, at: Date.now() });
