@@ -60,7 +60,7 @@ async function downloadCatalogFile(url, suggestedName) {
   }
   if (!total) throw new Error('Downloaded file is empty.');
   const dispositionName = filenameFromHeaders(response.headers.get('content-disposition') || '');
-  const pathName = decodeURIComponent(finalUrl.pathname.split('/').pop() || '');
+  let pathName = finalUrl.pathname.split('/').pop() || '';\n  try { pathName = decodeURIComponent(pathName); } catch {}
   const fileName = safeFileName(dispositionName || suggestedName || pathName, 'download.bin');
   return { buffer: Buffer.concat(chunks, total), fileName, mimetype: type || 'application/octet-stream', size: total };
 }
@@ -71,7 +71,7 @@ async function sendCatalogFile(ctx, url, title, suggestedName) {
     document: file.buffer,
     mimetype: file.mimetype,
     fileName: file.fileName,
-    caption: `╭━━〔 ✦ GOD VOIP MD 〕━━╮\\n\\n📦 *${clean(title, 140)}*\\n💾 *Size:* ${(file.size / 1048576).toFixed(1)} MB\\n✅ File downloaded and attached.\\n\\n✦ GOD VOIP MD`
+    caption: `╭━━〔 ✦ GOD VOIP MD 〕━━╮\n\n📦 *${clean(title, 140)}*\n💾 *Size:* ${(file.size / 1048576).toFixed(1)} MB\n✅ File downloaded and attached.\n\n✦ GOD VOIP MD`
   }, { quoted: ctx.m });
   return file;
 }
