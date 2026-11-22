@@ -107,11 +107,38 @@ export function createCatalogPlugin({ name, aliases = [], description, base, sea
     const query = ctx.text.trim();
     if (!query) return ctx.reply(`╭━━〔 ✦ GOD VOIP MD 〕━━╮\n\n🔎 *${name.toUpperCase()} SEARCH*\n\nUsage: ${ctx.prefix}${name} <name>\nExample: ${ctx.prefix}${name} ${name === 'oldgame' ? 'taxi racer' : name === 'modgame' ? 'gta san andreas' : 'spotify'}\n\n⏳ Search sessions expire in 15 minutes.\n╰━━━━━━━━━━━━━━━━━━━━╯`);
     try {
-      const data = fixedEndpoint
-        ? await api(base, fixedEndpoint, { [fixedParam]: 1 })
-        : await api(base, searchEndpoint, { [searchParam]: query, page: 1 });
-      const items = pickArray(data, ['items', 'results', 'apps', 'games', 'data']);
-      if (!items.length) return ctx.reply('❌ No results found. Try another search phrase.');
+      let data, items;
+      if (mode === 'modgame') {
+        // The shared /search endpoint mixes apps and games. Use the dedicated
+        // /games catalogue and filter locally so app results can never appear.
+        const pages = [];
+        for (let page = 1; page <= 5; page++) {
+          const pageData = await api(base, 'games', { page });
+          const pageItems = pickArray(pageData, ['items', 'results', 'games', 'data']);
+          if (!pageItems.length) break;
+          pages.push(...pageItems);
+          const totalPages = Number(pageData.totalPages || pageData.total_pages || pageData.pagination?.totalPages || pageData.pagination?.total_pages || 0);
+          if (totalPages && page >= totalPages) break;
+          if (pageItems.length < 10) break;
+        }
+        const terms = query.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim().split(/\\s+/).filter(Boolean);
+        const ranked = pages.map((item, index) => {
+          const title = String(item?.title || item?.name || item?.gameName || item?.appName || '');
+          const haystack = [title, item?.description, item?.category, item?.genre, item?.platform].filter(Boolean).join(' ').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ');
+          const hits = terms.filter(term => haystack.includes(term)).length;
+          const exact = terms.length && terms.every(term => haystack.includes(term));
+          return { item, index, hits, exact };
+        }).filter(x => x.hits > 0).sort((a, b) => Number(b.exact) - Number(a.exact) || b.hits - a.hits || a.index - b.index);
+        items = ranked.map(x => x.item).slice(0, 10);
+      } else {
+        data = fixedEndpoint
+          ? await api(base, fixedEndpoint, { [fixedParam]: 1 })
+          : await api(base, searchEndpoint, { [searchParam]: query, page: 1 });
+        items = pickArray(data, ['items', 'results', 'apps', 'games', 'data']);
+      }
+      if (!items.length) return ctx.reply(mode === 'modgame'
+        ? '❌ No matching Android games found in the games catalogue. Try the full game name.'
+        : '❌ No results found. Try another search phrase.');
       save(ctx, { step: 'results', items, query, mode });
       return ctx.reply(`╭━━〔 ${mode === 'oldgame' ? '🎮 OLD PC GAMES' : mode === 'modgame' ? '🎮 MOD GAMES' : '📱 MOD APK'} 〕━━╮\n\n🔎 *Search:* ${clean(query, 100)}\n📦 *Results:* ${items.length}\n\n${items.slice(0, 10).map(label).join('\n')}\n\n↪️ Reply with a result number.\n⏳ Expires in 15 minutes\n\n✦ GOD VOIP MD`);
     } catch (e) {
