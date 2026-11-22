@@ -124,8 +124,48 @@ async function onMessage(ctx) {
   if (state.step === 'qualities') {
     const quality = state.qualities[n - 1];
     if (!quality) { await ctx.reply('❌ Invalid quality number.'); return true; }
-    save(ctx, { step: 'done' });
-    await ctx.reply('╭━━〔 🎬 GOD VOIP MD 〕━━╮\n\n🎬 *' + clean(state.title, 140) + '*\n📺 *Quality:* ' + quality.label + (quality.server ? '\n🖥️ *Server:* ' + quality.server : '') + (quality.size ? '\n💾 *Size:* ' + quality.size : '') + '\n\n⬇️ *Download link:*\n' + quality.url + '\n\n✦ GOD VOIP MD');
+    save(ctx, { step: 'sending', title: state.title });
+    await ctx.sock.sendMessage(ctx.jid, { react: { text: '⬇️', key: ctx.m.key } }).catch(() => {});
+    try {
+      // Baileys fetches the selected media URL and uploads the bytes as a WhatsApp document.
+      let mimetype = 'video/mp4';
+      let fileName = clean(state.title, 120).replace(/[^a-z0-9._-]+/gi, '_') + '.mp4';
+      let sizeLabel = quality.size;
+      try {
+        const head = await fetch(quality.url, {
+          method: 'HEAD',
+          headers: { 'user-agent': 'Mozilla/5.0', accept: '*/*' },
+          redirect: 'follow',
+          signal: AbortSignal.timeout(20000)
+        });
+        if (head.ok) {
+          const type = (head.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+          if (type && !type.includes('text/html') && !type.includes('mpegurl') && !type.includes('json')) mimetype = type;
+          const disposition = head.headers.get('content-disposition') || '';
+          const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+          const fromHeader = match ? (match[1] || match[2]) : '';
+          if (fromHeader) { try { fileName = decodeURIComponent(fromHeader.replace(/^["']|["']$/g, '')); } catch { fileName = fromHeader; } }
+          const length = Number(head.headers.get('content-length') || 0);
+          if (length) sizeLabel = (length / 1048576).toFixed(1) + ' MB';
+        }
+      } catch {}
+      if (mimetype.includes('mpegurl') || /\.m3u8(?:$|\?)/i.test(quality.url)) {
+        throw new Error('This server returned an HLS playlist, not a single downloadable movie file. Choose another quality/server.');
+      }
+      if (!/\.(mp4|mkv|avi|mov|webm|m4v)$/i.test(fileName)) {
+        const ext = mimetype.includes('matroska') ? '.mkv' : mimetype.includes('webm') ? '.webm' : '.mp4';
+        fileName += ext;
+      }
+      await ctx.sock.sendMessage(ctx.jid, {
+        document: { url: quality.url },
+        mimetype,
+        fileName,
+        caption: '╭━━〔 🎬 GOD VOIP MD 〕━━╮\n\n🎬 *' + clean(state.title, 140) + '*\n📺 *Quality:* ' + quality.label + (quality.server ? '\n🖥️ *Server:* ' + quality.server : '') + (sizeLabel ? '\n💾 *Size:* ' + clean(sizeLabel, 30) : '') + '\n\n✅ *Movie file attached*\n✦ GOD VOIP MD'
+      }, { quoted: ctx.m });
+      await ctx.sock.sendMessage(ctx.jid, { react: { text: '✅', key: ctx.m.key } }).catch(() => {});
+    } catch (error) {
+      await ctx.reply('⚠️ *Movie upload failed:* ' + clean(error.message, 220) + '\nPlease choose another quality/server if available.');
+    }
     return true;
   }
   return false;
