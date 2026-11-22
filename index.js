@@ -1134,18 +1134,21 @@ async function handleCommand(sock, m) {
     // mode/owner gate (C3): in self mode a non-owner's plain "2" reply was
     // dropped here, so the selection session could never complete.
     if (trimmed && !trimmed.toLowerCase().startsWith(prefix)) {
-        const cinesubz = PLUGIN_MAP.get('cz') || PLUGIN_MAP.get('cinesubz');
-        if (cinesubz && typeof cinesubz.onMessage === 'function') {
-            const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
+        // Route plain-text selections to every plugin that owns an active
+        // conversation (CineSubz, Mod APK, Mod Games, Old PC Games, etc.).
+        const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
+        for (const activePlugin of PLUGIN_LIST) {
+            if (typeof activePlugin.onMessage !== 'function') continue;
             try {
-                const handled = await cinesubz.onMessage({
+                const handled = await activePlugin.onMessage({
                     sock, m, jid, config, prefix, reply, text: trimmed,
                     args: [], isOwner: !!m.key.fromMe,
+                    getCachedMessage,
                     state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
                 });
                 if (handled) return;
             } catch (error) {
-                console.log('[CINESUBZ REPLY ROUTER]', error?.message || error);
+                console.log(`[PLUGIN REPLY ROUTER: ${activePlugin.name}]`, error?.message || error);
             }
         }
         return;
