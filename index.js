@@ -966,17 +966,48 @@ ${texts.footer}`);
     const configuredDefault = kind === 'video' ? VIDEO_URL : AUDIO_URL;
     if (!url && !configuredDefault && !latest?.file) return reply(`❌ config.js හි ${kind === 'video' ? 'videoUrl' : 'audioUrl'} එකක් සකසන්න, link එකක් දෙන්න, හෝ .tourl media එකක් save කරන්න.`);
 
-    await reply(`📞 *${label} call request*\n👥 Targets: ${numbers.map(n => '+' + n).join(', ')}\n📡 Limit: ${MAX_CONCURRENT_CALLS} simultaneous calls\n🎛️ Media converting (${kind === 'video' ? 'mp4' : 'ogg'})...`);
+    // Send ONE status message and edit it as the batch progresses.
+    // This avoids flooding the chat with one WhatsApp message per target.
+    let statusMessage;
+    const statusText = (stage, lines = []) => [
+        `╭━━〔 ✦ ${label.toUpperCase()} CALLS 〕━━╮`,
+        '',
+        `📡 *Status:* ${stage}`,
+        `👥 *Targets:* ${numbers.length}`,
+        `✅ *Processed:* ${lines.length}/${numbers.length}`,
+        '',
+        ...numbers.map((number, index) => {
+            const result = lines[index];
+            return result ? result : `⏳ +${number} — waiting`;
+        }),
+        '',
+        texts.footer,
+    ].join('\n');
+    const updateStatus = async (stage, lines = []) => {
+        const text = statusText(stage, lines);
+        if (!statusMessage) {
+            statusMessage = await reply(text);
+            return;
+        }
+        try {
+            await sock.sendMessage(jid, { text, edit: statusMessage.key });
+        } catch (error) {
+            // Keep the original status message as the single source of truth.
+            console.log('[CALL STATUS EDIT] Could not edit status message:', error?.message || error);
+        }
+    };
+
+    await updateStatus('Preparing media…');
 
     let prepared;
     try { prepared = await resolveDialMedia(kind, url); }
-    catch (e) { return reply(`❌ Media error: ${e.message}\n\n${texts.footer}`); }
+    catch (e) {
+        await updateStatus('Media preparation failed', [`❌ Media error: ${e.message}`]);
+        return;
+    }
 
-    // Same converted file is reused for every number (converted only once).
-    // Dial sequentially with a 30s slot timeout per number (L10) and report
-    // progress as each number is reached, so a stuck slot does not leave the
-    // owner guessing which numbers were dialled.
     const lines = [];
+    await updateStatus('Starting calls…', lines);
     for (const number of numbers) {
         try {
             await Promise.race([
@@ -987,9 +1018,9 @@ ${texts.footer}`);
         } catch (e) {
             lines.push(`❌ +${number} — ${e?.message || 'Call failed'}`);
         }
-        await reply(`📞 ${label} calls — progress ${lines.length}/${numbers.length}\n${lines.join('\n')}`);
+        await updateStatus(`Calling · ${lines.length}/${numbers.length}`, lines);
     }
-    await reply(`╭━━〔 ✦ ${label.toUpperCase()} CALLS 〕━━╮\n${lines.join('\n')}\n╰━━━━━━━━━━━━━━━━━━╯\n${texts.footer}`);
+    await updateStatus('Completed', lines);
 }
 
 // ================= PLUGINS =================
