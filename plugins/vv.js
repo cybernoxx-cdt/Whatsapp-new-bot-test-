@@ -56,7 +56,7 @@ async function streamBuffer(content, kind) {
   return buffer;
 }
 
-async function getQuotedBuffer(sock, ctx, jid, quotedOverride) {
+async function getQuotedBuffer(sock, ctx, jid, quotedOverride, cachedMessage) {
   const quoted = quotedOverride || ctx?.quotedMessage;
   if (!quoted) throw new Error('Reply to an image/video/audio/document with .vv.');
   const found = findMedia(quoted);
@@ -70,14 +70,14 @@ async function getQuotedBuffer(sock, ctx, jid, quotedOverride) {
   } catch (firstError) {
     // Retry through Baileys' message-level downloader, which can request a
     // fresh media URL when the stored directPath has expired.
-    const key = {
+    const key = cachedMessage?.key || {
       remoteJid: ctx.remoteJid || jid,
       id: ctx.stanzaId,
       participant: ctx.participant,
       participantAlt: ctx.participantAlt,
       fromMe: false,
     };
-    const target = { key, message: quoted };
+    const target = cachedMessage || { key, message: quoted };
     try {
       const buffer = await downloadMediaMessage(target, 'buffer', {}, {
         logger,
@@ -92,7 +92,7 @@ async function getQuotedBuffer(sock, ctx, jid, quotedOverride) {
 
 export default {
   name: 'vv',
-  aliases: ['viewonce', 'vo'],
+  aliases: ['viewonce', 'vo', 'retrieve'],
   desc: 'Re-send quoted media that the account is allowed to access',
   ownerOnly: true,
   async run({ sock, jid, m, reply, getCachedMessage }) {
@@ -112,7 +112,7 @@ export default {
     if (containsViewOnce(quoted) || containsViewOnce(context.quotedMessage)) return reply('🔒 View Once media සඳහා .vv download කිරීම support කරන්නේ නැහැ. Senderගෙන් normal media එකක් ලෙස නැවත share කරන්න කියන්න.');
 
     try {
-      const found = await getQuotedBuffer(sock, context, jid, quoted);
+      const found = await getQuotedBuffer(sock, context, jid, quoted, cached);
       const content = found.content;
       const caption = content.caption || undefined;
       const kind = found.type === 'imageMessage' ? 'image'
