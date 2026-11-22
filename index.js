@@ -1125,7 +1125,6 @@ async function handleCommand(sock, m) {
     const isSelf = name === 'self';
     const isPublic = name === 'public';
     const plugin = PLUGIN_MAP.get(name);
-    if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall && !isSelf && !isPublic && !isMode) return;
 
     // Group messages identify the sender via participant; newer Baileys builds
     // may expose the phone-number JID as participantAlt when the primary is an LID.
@@ -1184,6 +1183,10 @@ async function handleCommand(sock, m) {
         }
         return;
     }
+
+    // Ignore unknown commands only after interactive plain-text replies have
+    // had a chance to reach active plugins. Numeric selections are not commands.
+    if (!plugin && !isCall && !isMenu && !isPing && !isVcall && !isAcall && !isSelf && !isPublic && !isMode) return;
 
     // Self mode: silently ignore non-owner commands.
     if (!inAllowedChat || (BOT_MODE === 'self' && !isOwner)) return;
