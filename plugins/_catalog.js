@@ -14,7 +14,7 @@ const validHttps = value => {
 async function api(base, endpoint, params = {}) {
   const url = new URL(endpoint, base + '/');
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
-  const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'GOD-VOIP-MD/1.0' }, signal: AbortSignal.timeout(25000) });
+  const res = await fetch(url, { headers: { accept: 'application/json, text/plain, */*', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'accept-language': 'en-US,en;q=0.9', 'cache-control': 'no-cache', pragma: 'no-cache', referer: base + '/' }, signal: AbortSignal.timeout(25000) });
   const data = await res.json().catch(() => null);
   if (!res.ok || !data || data.success === false || data.status === false || data.error) {
     throw new Error(clean(data?.message || data?.error || `API returned HTTP ${res.status}`, 220));
@@ -37,7 +37,8 @@ function get(c) {
   return value;
 }
 function label(item, i) {
-  return `*${i + 1}.* ${clean(item?.title || item?.name || item?.appName || item?.gameName || 'Untitled item', 140)}`;
+  const value = typeof item === 'string' ? item : item?.title || item?.name || item?.appName || item?.gameName || 'Untitled item';
+  return `*${i + 1}.* ${clean(value, 140)}`;
 }
 function itemUrl(item) {
   const u = item?.url || item?.link || item?.pageUrl || item?.downloadPageUrl;
@@ -59,6 +60,20 @@ export function createCatalogPlugin({ name, aliases = [], description, base, sea
       save(ctx, { step: 'results', items, query, mode });
       return ctx.reply(`╭━━〔 ${mode === 'oldgame' ? '🎮 OLD PC GAMES' : mode === 'modgame' ? '🎮 MOD GAMES' : '📱 MOD APK'} 〕━━╮\n\n🔎 *Search:* ${clean(query, 100)}\n📦 *Results:* ${items.length}\n\n${items.slice(0, 10).map(label).join('\n')}\n\n↪️ Reply with a result number.\n⏳ Expires in 15 minutes\n\n✦ GOD VOIP MD`);
     } catch (e) {
+      // The legacy PC-game search endpoint can be blocked by its upstream
+      // source (HTTP 403). Fall back to the API's platform catalogue.
+      if (mode === 'oldgame' && /403|forbidden/i.test(e.message)) {
+        try {
+          const catalogue = await api(base, 'platforms');
+          const platforms = pickArray(catalogue, ['platforms', 'items', 'results', 'systems']);
+          if (platforms.length) {
+            save(ctx, { step: 'platforms', platforms, query, mode, fallbackBrowse: true });
+            return ctx.reply(`⚠️ Search source blocked this query.\n\n🎮 *Browse by platform instead:*\n${platforms.slice(0, 20).map(label).join('\n')}\n\n↪️ Reply with a platform number.\n✦ GOD VOIP MD`);
+          }
+        } catch (fallbackError) {
+          return ctx.reply(`⚠️ Old-game search is blocked (HTTP 403), and platform fallback failed: ${clean(fallbackError.message, 180)}`);
+        }
+      }
       return ctx.reply(`⚠️ Search failed: ${clean(e.message, 220)}\nPlease try again later.`);
     }
   }
@@ -106,14 +121,21 @@ export function createCatalogPlugin({ name, aliases = [], description, base, sea
       if (!platform) { await ctx.reply('❌ Invalid platform number.'); return true; }
       try {
         let files = pickArray(platform, ['files', 'downloads', 'links']);
+        const platformName = typeof platform === 'string' ? platform : platform.name || platform.platform || platform.title;
         if (!files.length) {
-          const pname = platform.name || platform.platform || platform.title;
-          const data = await api(base, 'platform', { name: pname, page: 1 });
-          files = pickArray(data, ['items', 'files', 'downloads', 'games']);
+          const data = await api(base, 'platform', { name: platformName, page: 1 });
+          const games = pickArray(data, ['items', 'results', 'games', 'files', 'downloads']);
+          if (!games.length) throw new Error('No games/files were returned for this platform.');
+          if (s.fallbackBrowse || games.some(g => g?.url || g?.link || g?.pageUrl)) {
+            save(ctx, { ...s, step: 'results', items: games, title: platformName, selectedPlatform: platform });
+            await ctx.reply(`🕹️ *${clean(platformName, 80)}*\n\nGames found: ${games.length}\n${games.slice(0, 20).map(label).join('\n')}\n\n↪️ Reply with a game number.`);
+            return true;
+          }
+          files = games;
         }
         if (!files.length) throw new Error('No files were returned for this platform.');
         save(ctx, { ...s, step: 'files', selectedPlatform: platform, files });
-        await ctx.reply(`🕹️ *${clean(platform.name || platform.title || platform.platform || 'Platform', 80)}*\n\nChoose a file:\n${makeFileLines(files.slice(0, 20))}\n\nReply with a file number.`);
+        await ctx.reply(`🕹️ *${clean(platformName || 'Platform', 80)}*\n\nChoose a file:\n${makeFileLines(files.slice(0, 20))}\n\nReply with a file number.`);
       } catch (e) { await ctx.reply(`⚠️ Platform lookup failed: ${clean(e.message, 200)}`); }
       return true;
     }
