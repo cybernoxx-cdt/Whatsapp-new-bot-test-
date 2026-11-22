@@ -60,7 +60,8 @@ async function downloadCatalogFile(url, suggestedName) {
   }
   if (!total) throw new Error('Downloaded file is empty.');
   const dispositionName = filenameFromHeaders(response.headers.get('content-disposition') || '');
-  let pathName = finalUrl.pathname.split('/').pop() || '';\n  try { pathName = decodeURIComponent(pathName); } catch {}
+  let pathName = finalUrl.pathname.split('/').pop() || '';
+  try { pathName = decodeURIComponent(pathName); } catch {}
   const fileName = safeFileName(dispositionName || suggestedName || pathName, 'download.bin');
   return { buffer: Buffer.concat(chunks, total), fileName, mimetype: type || 'application/octet-stream', size: total };
 }
