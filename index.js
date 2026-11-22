@@ -1176,7 +1176,10 @@ async function handleCommand(sock, m) {
                     getCachedMessage,
                     state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
                 });
-                if (handled) return;
+                if (handled) {
+                    try { await sock.sendMessage(jid, { react: { text: '✅', key: m.key } }); } catch {}
+                    return;
+                }
             } catch (error) {
                 console.log(`[PLUGIN REPLY ROUTER: ${activePlugin.name}]`, error?.message || error);
             }
@@ -1206,7 +1209,7 @@ async function handleCommand(sock, m) {
         jid: '🆔', check: '🔍', setpp: '🖼️', fulldp: '🖼️', pinterest: '📌',
         privacy: '🛡️', runtime: '⏱️', owner: '👑', 'media-packs': '📦',
     };
-    const reactionEmoji = commandReactions[name] || (plugin?.category === 'download' ? '📥' : '⚡');
+    const categoryReactions = { download: '📥', search: '🔎', tools: '🛠️', utility: '⚙️', ai: '🤖', fun: '🎮', group: '👥', owner: '👑', media: '🎬' };\n    const reactionEmoji = plugin?.react || commandReactions[name] || categoryReactions[plugin?.category] || '⚡';
     try { await sock.sendMessage(jid, { react: { text: reactionEmoji, key: m.key } }); }
     catch (error) { console.log('[COMMAND REACTION]', error?.message || error); }
 
