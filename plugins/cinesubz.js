@@ -1,4 +1,5 @@
 // GOD VOIP MD — CineSubz TV quality picker + real WhatsApp MP4 document delivery
+import { getPluginSessionKey } from '../lib/plugin-session.js';
 const BASE = 'https://mochi-apis.koyeb.app/api/movie/cinesubz';
 const KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env.CINESUBZ_API_KEY || '';
 const sessions = new Map();
@@ -33,7 +34,7 @@ const validDirect = value => {
     return u.protocol === 'https:' && !isPrivateOrReservedHost(u.hostname);
   } catch { return false; }
 };
-const sessionKey = c => String(c.jid) + '|' + String(c.m?.key?.participantAlt || c.m?.key?.participant || c.m?.key?.remoteJidAlt || c.jid);
+const sessionKey = c => getPluginSessionKey(c);
 function getSession(c) {
   const key = sessionKey(c), session = sessions.get(key);
   if (!session || Date.now() - session.at > TTL) { sessions.delete(key); return null; }
