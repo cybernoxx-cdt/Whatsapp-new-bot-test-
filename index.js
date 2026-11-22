@@ -1209,7 +1209,8 @@ async function handleCommand(sock, m) {
         jid: '🆔', check: '🔍', setpp: '🖼️', fulldp: '🖼️', pinterest: '📌',
         privacy: '🛡️', runtime: '⏱️', owner: '👑', 'media-packs': '📦',
     };
-    const categoryReactions = { download: '📥', search: '🔎', tools: '🛠️', utility: '⚙️', ai: '🤖', fun: '🎮', group: '👥', owner: '👑', media: '🎬' };\n    const reactionEmoji = plugin?.react || commandReactions[name] || categoryReactions[plugin?.category] || '⚡';
+    const categoryReactions = { download: '📥', search: '🔎', tools: '🛠️', utility: '⚙️', ai: '🤖', fun: '🎮', group: '👥', owner: '👑', media: '🎬' };
+    const reactionEmoji = plugin?.react || commandReactions[name] || categoryReactions[plugin?.category] || '⚡';
     try { await sock.sendMessage(jid, { react: { text: reactionEmoji, key: m.key } }); }
     catch (error) { console.log('[COMMAND REACTION]', error?.message || error); }
 
