@@ -1002,7 +1002,7 @@ ${texts.footer}`);
     let prepared;
     try { prepared = await resolveDialMedia(kind, url); }
     catch (e) {
-        await updateStatus('Media preparation failed', [`❌ Media error: ${e.message}`]);
+        await updateStatus(`Media preparation failed: ${e.message}`);
         return;
     }
 
