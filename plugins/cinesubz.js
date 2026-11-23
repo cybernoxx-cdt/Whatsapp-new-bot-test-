@@ -3,6 +3,7 @@ import { getPluginSessionKey } from '../lib/plugin-session.js';
 const BASE = 'https://mochi-apis.koyeb.app/api/movie/cinesubz';
 const KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env.CINESUBZ_API_KEY || '';
 const sessions = new Map();
+let flowSequence = 0;
 const TTL = 30 * 60 * 1000;
 const MAX_BULK_EPISODES = 20;
 const cancelledSeasons = new Set(); // session keys whose delivery was cancelled (P7)
@@ -42,7 +43,7 @@ function getSession(c) {
   return session;
 }
 function setSession(c, value) {
-  sessions.set(sessionKey(c), { ...value, at: Date.now() });
+  sessions.set(sessionKey(c), { ...value, flowId: ++flowSequence, at: Date.now() });
   if (sessions.size > 1000) {
     const oldest = [...sessions].sort((a, b) => a[1].at - b[1].at).slice(0, 200);
     for (const [key] of oldest) sessions.delete(key);
@@ -53,9 +54,13 @@ async function react(c, emoji) {
 }
 const say = (c, text) => c.reply(text);
 async function prompt(c, text) {
+  const before = getSession(c);
+  const flowId = before?.flowId;
   const sent = await say(c, text);
-  const state = getSession(c);
-  if (state) setSession(c, { ...state, promptId: sent?.key?.id || null, busy: false });
+  const current = getSession(c);
+  if (current && current.flowId === flowId) {
+    setSession(c, { ...current, promptId: sent?.key?.id || null, busy: false });
+  }
   return sent;
 }
 async function api(endpoint, params = {}) {
