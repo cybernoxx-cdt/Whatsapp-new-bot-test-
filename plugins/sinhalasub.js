@@ -110,7 +110,7 @@ function extractMediaCandidates(html) {
   const found = new Set();
   const patterns = [
     /(?:src|href|data-src|data-url|data-download)=["']([^"']+)["']/gi,
-    /https?:\\?\/\\?\/[^"'\\s<>]+?\.(?:mp4|mkv|avi|mov|webm|m4v)(?:\?[^"'\\s<>]*)?/gi
+    /https?:\/\/[^"'\s<>]+/gi
   ];
   for (const pattern of patterns) {
     let match;
@@ -170,7 +170,7 @@ async function resolveMediaUrl(input) {
       const first = await reader.read();
       await reader.cancel().catch(() => {});
       const head = Buffer.from(first?.value?.subarray(0, 32) || []).toString('latin1');
-      const looksLikeMedia = /ftyp|moov|mdat|\\x1a\\x45\\xdf\\xa3|RIFF|ID3/.test(head);
+      const looksLikeMedia = /ftyp|moov|mdat|RIFF|ID3/.test(head);
       if (type === 'text/plain' && !looksLikeMedia) throw new Error('The selected server returned text, not a playable movie file.');
     }
     if (totalBytes > 0 && totalBytes < 50 * 1024) {
