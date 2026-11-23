@@ -4,6 +4,7 @@ import { getPluginSessionKey } from '../lib/plugin-session.js';
 const BASE = 'https://shadow-movie-x-sinhalasub-api.lakshandamayantha592.workers.dev';
 const TTL = 15 * 60 * 1000;
 const sessions = new Map();
+let flowSequence = 0;
 const clean = (v, n = 180) => String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const safeUrl = value => {
   try { const u = new URL(String(value || '')); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; }
@@ -33,7 +34,7 @@ function arrayFrom(value, keys) {
   return [];
 }
 function save(ctx, state) {
-  sessions.set(keyFor(ctx), { ...state, at: Date.now() });
+  sessions.set(keyFor(ctx), { ...state, flowId: ++flowSequence, at: Date.now() });
   if (sessions.size > 500) {
     for (const [key, value] of sessions) if (Date.now() - value.at > TTL) sessions.delete(key);
     while (sessions.size > 500) sessions.delete(sessions.keys().next().value);
@@ -44,6 +45,22 @@ function get(ctx) {
   if (!state || Date.now() - state.at > TTL) { sessions.delete(key); return null; }
   state.at = Date.now();
   return state;
+}
+async function prompt(ctx, text) {
+  const before = get(ctx);
+  const flowId = before?.flowId;
+  const sent = await ctx.reply(text);
+  const current = get(ctx);
+  if (current && current.flowId === flowId) save(ctx, { ...current, promptId: sent?.key?.id || null, busy: false });
+  return sent;
+}
+function quotedMenuId(ctx) {
+  const message = ctx.m?.message || {};
+  return message.extendedTextMessage?.contextInfo?.stanzaId
+    || message.imageMessage?.contextInfo?.stanzaId
+    || message.videoMessage?.contextInfo?.stanzaId
+    || message.documentMessage?.contextInfo?.stanzaId
+    || null;
 }
 function movieTitle(item, index) {
   return clean(item?.title || item?.name || item?.movie || item?.movie_name || 'Movie ' + (index + 1), 130);
@@ -84,17 +101,95 @@ async function search(ctx) {
     const items = arrayFrom(data, ['items', 'results', 'movies', 'data']);
     if (!items.length) return ctx.reply('❌ No SinhalaSub movie results found. Try another title.');
     save(ctx, { step: 'results', items, query });
-    return ctx.reply('╭━━〔 🎬 SINHALASUB MOVIES 〕━━╮\n\n🔎 *Search:* ' + clean(query, 100) + '\n📦 *Results:* ' + items.length + '\n\n' + items.slice(0, 10).map((item, i) => '*' + (i + 1) + '.* ' + movieTitle(item, i)).join('\n') + '\n\n↪️ Reply with a movie number.\n⏳ Expires in 15 minutes\n\n✦ GOD VOIP MD');
+    return prompt(ctx, '╭━━〔 🎬 SINHALASUB MOVIES 〕━━╮\n\n🔎 *Search:* ' + clean(query, 100) + '\n📦 *Results:* ' + items.length + '\n\n' + items.slice(0, 10).map((item, i) => '*' + (i + 1) + '.* ' + movieTitle(item, i)).join('\n') + '\n\n↪️ Reply with a movie number.\n⏳ Expires in 15 minutes\n\n✦ GOD VOIP MD');
   } catch (error) {
     return ctx.reply('⚠️ SinhalaSub search failed: ' + clean(error.message, 200));
   }
+}
+function extractMediaCandidates(html) {
+  const found = new Set();
+  const patterns = [
+    /(?:src|href|data-src|data-url|data-download)=["']([^"']+)["']/gi,
+    /https?:\\?\/\\?\/[^"'\\s<>]+?\.(?:mp4|mkv|avi|mov|webm|m4v)(?:\?[^"'\\s<>]*)?/gi
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(html)) !== null) {
+      const raw = match[1] || match[0];
+      const value = raw.replace(/&amp;/g, '&').replace(/\\\//g, '/');
+      const url = safeUrl(value);
+      if (url && /\.(?:mp4|mkv|avi|mov|webm|m4v)(?:$|[?#])/i.test(url)) found.add(url);
+    }
+  }
+  return [...found];
+}
+async function resolveMediaUrl(input) {
+  let current = safeUrl(input);
+  if (!current) throw new Error('Selected quality does not contain a valid HTTPS download URL.');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(current, {
+      headers: { 'user-agent': 'Mozilla/5.0', accept: '*/*', range: 'bytes=0-2047' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(30000)
+    });
+    if (!response.ok && response.status !== 206) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error('Download host returned HTTP ' + response.status);
+    }
+    const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (type.includes('text/html') || type.includes('application/xhtml')) {
+      const html = (await response.text()).slice(0, 2_000_000);
+      const candidates = extractMediaCandidates(html);
+      if (!candidates.length) throw new Error('The selected link opens a web page, not the movie file. Try another server/quality.');
+      current = candidates[0];
+      continue;
+    }
+    if (type.includes('application/json')) {
+      const json = await response.json().catch(() => null);
+      const candidates = [];
+      const walk = (value, depth = 0) => {
+        if (!value || depth > 5) return;
+        if (typeof value === 'string') {
+          const url = safeUrl(value);
+          if (url && /\.(?:mp4|mkv|avi|mov|webm|m4v)(?:$|[?#])/i.test(url)) candidates.push(url);
+        } else if (Array.isArray(value)) value.forEach(x => walk(x, depth + 1));
+        else if (typeof value === 'object') for (const [key, child] of Object.entries(value)) {
+          if (/url|link|download|src|file/i.test(key)) walk(child, depth + 1);
+        }
+      };
+      walk(json);
+      if (!candidates.length) throw new Error('The download API returned JSON instead of a movie file.');
+      current = candidates[0];
+      continue;
+    }
+    const range = response.headers.get('content-range') || '';
+    const totalMatch = range.match(/\/(\d+)$/);
+    const totalBytes = totalMatch ? Number(totalMatch[1]) : Number(response.headers.get('content-length') || 0);
+    const reader = response.body?.getReader();
+    if (reader) {
+      const first = await reader.read();
+      await reader.cancel().catch(() => {});
+      const head = Buffer.from(first?.value?.subarray(0, 32) || []).toString('latin1');
+      const looksLikeMedia = /ftyp|moov|mdat|\\x1a\\x45\\xdf\\xa3|RIFF|ID3/.test(head);
+      if (type === 'text/plain' && !looksLikeMedia) throw new Error('The selected server returned text, not a playable movie file.');
+    }
+    if (totalBytes > 0 && totalBytes < 50 * 1024) {
+      throw new Error('The selected link is only ' + Math.ceil(totalBytes / 1024) + ' KB, not a full movie. Choose another quality/server.');
+    }
+    if (/mpegurl/.test(type) || /\.m3u8(?:$|[?#])/i.test(response.url || current)) throw new Error('This is an HLS playlist, not a single MP4 movie file.');
+    return response.url || current;
+  }
+  throw new Error('Could not resolve a direct movie download URL.');
 }
 async function onMessage(ctx) {
   const state = get(ctx);
   if (!state) return false;
   const text = String(ctx.text || '').trim();
   if (!/^\d{1,2}$/.test(text)) return false;
+  if (!state.promptId || quotedMenuId(ctx) !== state.promptId) return false;
+  if (state.busy) return true;
   const n = Number(text);
+  save(ctx, { ...state, busy: true });
   if (state.step === 'results') {
     const item = state.items[n - 1];
     if (!item) { await ctx.reply('❌ Invalid movie number. Reply with a number from the latest list.'); return true; }
@@ -115,7 +210,7 @@ async function onMessage(ctx) {
       }
       save(ctx, { step: 'qualities', title, qualities, info });
       const imdb = info.imdb ? '\n⭐ IMDb: ' + clean(info.imdb, 40) : '';
-      await ctx.reply('╭━━〔 🎬 SINHALASUB DOWNLOAD 〕━━╮\n\n🎬 *' + title + '*' + imdb + '\n📦 *Available links:* ' + qualities.length + '\n\n' + qualities.slice(0, 15).map((q, i) => '*' + (i + 1) + '.* ' + q.label + (q.server ? ' — ' + q.server : '') + (q.size ? ' (' + q.size + ')' : '')).join('\n') + '\n\n↪️ Reply with a quality number.\n\n✦ GOD VOIP MD');
+      await prompt(ctx, '╭━━〔 🎬 SINHALASUB DOWNLOAD 〕━━╮\n\n🎬 *' + title + '*' + imdb + '\n📦 *Available links:* ' + qualities.length + '\n\n' + qualities.slice(0, 15).map((q, i) => '*' + (i + 1) + '.* ' + q.label + (q.server ? ' — ' + q.server : '') + (q.size ? ' (' + q.size + ')' : '')).join('\n') + '\n\n↪️ Reply with a quality number.\n\n✦ GOD VOIP MD');
     } catch (error) {
       await ctx.reply('⚠️ Could not load movie details: ' + clean(error.message, 200));
     }
@@ -131,8 +226,9 @@ async function onMessage(ctx) {
       let mimetype = 'video/mp4';
       let fileName = clean(state.title, 120).replace(/[^a-z0-9._-]+/gi, '_') + '.mp4';
       let sizeLabel = quality.size;
+      const mediaUrl = await resolveMediaUrl(quality.url);
       try {
-        const head = await fetch(quality.url, {
+        const head = await fetch(mediaUrl, {
           method: 'HEAD',
           headers: { 'user-agent': 'Mozilla/5.0', accept: '*/*' },
           redirect: 'follow',
@@ -157,7 +253,7 @@ async function onMessage(ctx) {
         fileName += ext;
       }
       await ctx.sock.sendMessage(ctx.jid, {
-        document: { url: quality.url },
+        document: { url: mediaUrl },
         mimetype,
         fileName,
         caption: '╭━━〔 🎬 GOD VOIP MD 〕━━╮\n\n🎬 *' + clean(state.title, 140) + '*\n📺 *Quality:* ' + quality.label + (quality.server ? '\n🖥️ *Server:* ' + quality.server : '') + (sizeLabel ? '\n💾 *Size:* ' + clean(sizeLabel, 30) : '') + '\n\n✅ *Movie file attached*\n✦ GOD VOIP MD'
