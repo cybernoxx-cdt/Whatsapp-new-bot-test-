@@ -52,6 +52,12 @@ async function react(c, emoji) {
   try { await c.sock.sendMessage(c.jid, { react: { text: emoji, key: c.m.key } }); } catch {}
 }
 const say = (c, text) => c.reply(text);
+async function prompt(c, text) {
+  const sent = await say(c, text);
+  const state = getSession(c);
+  if (state) setSession(c, { ...state, promptId: sent?.key?.id || null, busy: false });
+  return sent;
+}
 async function api(endpoint, params = {}) {
   if (!KEY) throw new Error('MOCHI_API_KEY secret එක hosting environment secrets වල configure කරන්න.');
   const url = new URL(BASE + '/' + endpoint);
@@ -124,7 +130,7 @@ async function search(c, query, filter = 'all') {
   const items = [...movies.map(x => ({ ...x, kind: 'movie' })), ...tvs.map(x => ({ ...x, kind: 'tv' }))];
   if (!items.length) return say(c, '*😕 No results found. Try another title.*');
   setSession(c, { mode: 'search', items });
-  return say(c, formatSearch(data.query || query, movies, tvs));
+  return prompt(c, formatSearch(data.query || query, movies, tvs));
 }
 
 function firstValue(objects, keys) {
@@ -235,7 +241,7 @@ async function openMovie(c, item) {
   await sendInfoCard(c, data, item, 'movie');
   if (links.length) {
     const lines = ['*⬇️ MOVIE DOWNLOAD QUALITIES*', numbered(links.slice(0, 10), qualityLabel), '', '↪️ Reply with a quality number'];
-    return say(c, lines.join('\n'));
+    return prompt(c, lines.join('\n'));
   }
   return say(c, '*❌ No download qualities found for this movie.*');
 }
@@ -255,7 +261,7 @@ async function openTv(c, item) {
   }
   setSession(c, { mode: 'tv', seasons: menu.seasons, choices: menu.choices, title: merged.title });
   await sendInfoCard(c, merged, item, 'tv');
-  return say(c, menu.text);
+  return prompt(c, menu.text);
 }
 async function getEpisodeOptions(episode) {
   if (!validPage(episode?.url)) throw new Error('Invalid episode URL');
@@ -270,7 +276,7 @@ async function openEpisode(c, episode, title) {
   const lines = ['*╭━━〔 🎞️ SELECT EPISODE QUALITY 〕━━╮*', '', bold(result.data.title || episode.title || 'Episode'), ''];
   lines.push(numbered(result.options.slice(0, 10), option => '🎥 ' + bold(qualityLabel(option)) + (sizeLabel(option) ? ' • 💾 ' + bold(sizeLabel(option)) : '')));
   lines.push('', '↪️ Reply with a number to download this episode', '*✦ GOD VOIP MD*');
-  return say(c, lines.join('\n'));
+  return prompt(c, lines.join('\n'));
 }
 async function resolveDirect(option, type = 'episode') {
   const pageUrl = option?.link || option?.url;
@@ -433,23 +439,37 @@ async function choose(c, number) {
 }
 async function plainReply(c, text) {
   const value = String(text || '').trim();
-  // `.cz cancel` stops an in-progress season delivery (P7).
+  const state = getSession(c);
+  const contextInfo = c.m?.message?.extendedTextMessage?.contextInfo
+    || c.m?.message?.imageMessage?.contextInfo
+    || c.m?.message?.videoMessage?.contextInfo
+    || {};
+  const repliedTo = contextInfo.stanzaId;
+
   if (/^cancel$/i.test(value)) {
-    const s = getSession(c);
-    if (s && s.mode === 'bulk_quality') {
+    if (state && state.mode === 'bulk_quality') {
       cancelledSeasons.add(sessionKey(c));
       await say(c, '*⏹️ Cancelling season delivery…*');
       return true;
     }
     return false;
   }
-  if (!/^\d{1,3}$/.test(value) || !getSession(c)) return false;
-  try { return await choose(c, Number(value)); }
-  catch (error) {
+
+  // Accept only a reply to the exact active menu message.
+  if (!/^\d{1,3}$/.test(value) || !state || !state.promptId || repliedTo !== state.promptId) return false;
+  if (state.busy) return true;
+
+  setSession(c, { ...state, busy: true });
+  try {
+    return await choose(c, Number(value));
+  } catch (error) {
     console.error('[CINESUBZ REPLY]', error?.stack || error);
     await react(c, '⚠️');
     await say(c, '*❌ CineSubz error:* ' + bold(error.message || 'Unknown error'));
     return true;
+  } finally {
+    const current = getSession(c);
+    if (current?.busy) setSession(c, { ...current, busy: false });
   }
 }
 export default {
