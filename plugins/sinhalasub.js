@@ -192,9 +192,9 @@ async function onMessage(ctx) {
   save(ctx, { ...state, busy: true });
   if (state.step === 'results') {
     const item = state.items[n - 1];
-    if (!item) { await ctx.reply('❌ Invalid movie number. Reply with a number from the latest list.'); return true; }
+    if (!item) { save(ctx, { ...state, busy: false }); await ctx.reply('❌ Invalid movie number. Reply to the latest SinhalaSub results menu.'); return true; }
     const url = movieUrl(item);
-    if (!url) { await ctx.reply('❌ This movie result has no valid HTTPS page URL.'); return true; }
+    if (!url) { save(ctx, { ...state, busy: false }); await ctx.reply('❌ This movie result has no valid HTTPS page URL.'); return true; }
     try {
       const [info, dl] = await Promise.all([api('info', { url }), api('dl', { url })]);
       const title = clean(info.title || info.name || movieTitle(item, n - 1), 140);
@@ -212,13 +212,15 @@ async function onMessage(ctx) {
       const imdb = info.imdb ? '\n⭐ IMDb: ' + clean(info.imdb, 40) : '';
       await prompt(ctx, '╭━━〔 🎬 SINHALASUB DOWNLOAD 〕━━╮\n\n🎬 *' + title + '*' + imdb + '\n📦 *Available links:* ' + qualities.length + '\n\n' + qualities.slice(0, 15).map((q, i) => '*' + (i + 1) + '.* ' + q.label + (q.server ? ' — ' + q.server : '') + (q.size ? ' (' + q.size + ')' : '')).join('\n') + '\n\n↪️ Reply with a quality number.\n\n✦ GOD VOIP MD');
     } catch (error) {
+      const current = get(ctx);
+      if (current?.step === 'results') save(ctx, { ...current, busy: false });
       await ctx.reply('⚠️ Could not load movie details: ' + clean(error.message, 200));
     }
     return true;
   }
   if (state.step === 'qualities') {
     const quality = state.qualities[n - 1];
-    if (!quality) { await ctx.reply('❌ Invalid quality number.'); return true; }
+    if (!quality) { save(ctx, { ...state, busy: false }); await ctx.reply('❌ Invalid quality number.'); return true; }
     save(ctx, { step: 'sending', title: state.title });
     await ctx.sock.sendMessage(ctx.jid, { react: { text: '⬇️', key: ctx.m.key } }).catch(() => {});
     try {
@@ -226,7 +228,24 @@ async function onMessage(ctx) {
       let mimetype = 'video/mp4';
       let fileName = clean(state.title, 120).replace(/[^a-z0-9._-]+/gi, '_') + '.mp4';
       let sizeLabel = quality.size;
-      const mediaUrl = await resolveMediaUrl(quality.url);
+      let mediaUrl;
+      try {
+        mediaUrl = await resolveMediaUrl(quality.url);
+      } catch (resolveError) {
+        // SinhalaSub's ad-gateway links are web pages, not video files. Never
+        // attach that HTML as a fake .mp4; return the original gateway link.
+        save(ctx, { step: 'done', title: state.title });
+        await ctx.reply(
+          '╭━━〔 🎬 SINHALASUB DOWNLOAD 〕━━╮\\n\\n' +
+          '🎬 *' + clean(state.title, 140) + '*\\n' +
+          '📺 *Quality:* ' + clean(quality.label, 90) +
+          (quality.server ? '\\n🌐 *Server:* ' + clean(quality.server, 50) : '') +
+          (quality.size ? '\\n💾 *Size:* ' + clean(quality.size, 30) : '') +
+          '\\n\\n🔗 *Download gateway:*\\n' + quality.url +
+          '\\n\\n⚠️ This host requires browser verification before the actual file is unlocked. It is not a direct MP4 URL, so it cannot safely be sent as a movie attachment.\\n\\n✦ GOD VOIP MD'
+        );
+        return true;
+      }
       try {
         const head = await fetch(mediaUrl, {
           method: 'HEAD',
