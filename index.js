@@ -746,61 +746,85 @@ async function runPlayback(voip, sock, callId, isVideo, replyJid, mediaUrl) {
 async function answerIncoming(voip, sock, callId, isVideo, replyJid) {
     if (handled.has(callId) || accepting.has(callId)) return;
     accepting.add(callId);
+    let accepted = false;
     try {
-        const latest = getLatestCallMedia()?.file || '';
-        // Prefer the explicitly configured media for the matching call type.
-        // Never use a video URL as a fallback for an incoming audio-only call.
-        const candidates = isVideo
-            ? [VIDEO_URL, latest]
-            : [AUDIO_URL, latest];
-        let prepared = null; const errors = [];
-        for (const candidate of [...new Set(candidates.filter(Boolean))]) {
-            try { prepared = await prepareMedia(candidate, isVideo); break; }
-            catch (error) { errors.push(error.message); }
-        }
-        if (!prepared) {
-            const configured = isVideo ? VIDEO_URL : AUDIO_URL;
-            const hint = configured
-                ? 'Configured media URL එක direct/public media link එකක්ද සහ එහි නිවැරදි audio/video stream එක තිබෙනවාද පරීක්ෂා කරන්න.'
-                : `config.js runtime එකට ${isVideo ? 'VIDEO_URL / DEFAULT_VIDEO_URL' : 'AUDIO_URL / DEFAULT_AUDIO_URL'} ලබාදී නැහැ. Environment variable එක සකසන්න හෝ .tourl media එකක් සුරකින්න.`;
-            throw new Error(`Incoming ${isVideo ? 'video' : 'audio'} call සඳහා සුදුසු media එකක් නැහැ. ${hint} ${errors.join(' | ')}`);
-        }
-        console.log(`📦 incoming ${isVideo ? 'video' : 'audio'} media ready:`, prepared.kind, prepared.file);
+        // Answer immediately. A broken/blocked media URL must never prevent
+        // the incoming one-to-one call from being accepted.
+        if (endedCalls.has(callId)) return;
+        await voip.acceptCall(callId);
+        accepted = true;
+        console.log('✅ Incoming call accepted immediately:', callId);
 
-        // Prepare expensive FFmpeg work BEFORE answering. Previously getPcm()
-        // ran only after acceptCall(), so the peer could hang up while the bot
-        // was decoding the audio; playback then targeted an already-ended call.
         if (endedCalls.has(callId)) {
-            console.log('⏭️ Incoming call ended before media preparation completed:', callId);
+            console.log('⏭️ Call ended immediately after acceptance:', callId);
             return;
         }
+
+        // Prefer .tourl's local file. It avoids third-party HTTP 403 responses.
+        // Fall back to the configured URL only when no saved local media works.
+        const latest = getLatestCallMedia()?.file || '';
+        const configured = isVideo ? VIDEO_URL : AUDIO_URL;
+        const candidates = [...new Set([latest, configured].filter(Boolean))];
+        let prepared = null;
+        const errors = [];
+
+        for (const candidate of candidates) {
+            try {
+                prepared = await prepareMedia(candidate, isVideo);
+                console.log('📦 Incoming call media ready:', prepared.kind, path.basename(prepared.file));
+                break;
+            } catch (error) {
+                errors.push(error?.message || String(error));
+                console.log('⚠️ Incoming call media candidate failed:', error?.message || error);
+            }
+        }
+
+        if (!prepared) {
+            const mediaType = isVideo ? 'video' : 'audio';
+            const hint = candidates.length
+                ? 'Saved .tourl media and configured URL were both unavailable or invalid.'
+                : 'Audio/video එකකට reply කරලා .tourl යවන්න, නැත්නම් DEFAULT_AUDIO_URL / DEFAULT_VIDEO_URL එකක් configure කරන්න.';
+            const reason = `Incoming ${mediaType} call answered, but playback media is unavailable. ${hint} ${errors.join(' | ')}`;
+            console.log('⚠️', reason);
+            try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n${reason}\n\n${texts.footer}` }); } catch {}
+            await voip.hangup(callId).catch(() => {});
+            return;
+        }
+
+        if (endedCalls.has(callId)) {
+            console.log('⏭️ Call ended while preparing media:', callId);
+            return;
+        }
+
+        // Decode and validate after accepting. This can no longer cause the
+        // incoming call to ring until a remote URL finishes downloading.
         const pcm = await Promise.race([
             getPcm(prepared.file),
-            sleep(PRE_DECODE_DEADLINE_MS).then(() => { throw new Error('Media decode exceeded the 10s pre-decode deadline'); }),
+            sleep(PRE_DECODE_DEADLINE_MS).then(() => { throw new Error('Media decode exceeded the 10s deadline'); }),
         ]);
         if (!pcm.length) throw new Error('Media decoded to zero audio samples.');
         if (isVideo) {
             const localVideo = fileCache.get(prepared.file);
             if (localVideo) await makeCallVideo(localVideo);
         }
-        if (endedCalls.has(callId)) {
-            console.log('⏭️ Incoming call ended during media preparation:', callId);
-            return;
-        }
 
-        await voip.acceptCall(callId);
-        console.log('✅ Call accepted:', callId);
-        if (endedCalls.has(callId)) {
-            console.log('⏭️ Call ended immediately after acceptance; playback skipped:', callId);
-            return;
-        }
+        if (endedCalls.has(callId)) return;
         await runPlayback(voip, sock, callId, isVideo, replyJid, prepared.file);
     } catch (e) {
-        console.log('❌ Incoming call error:', e.message);
-        try { await voip.rejectCall(callId); } catch {}
-        try { await sock.sendMessage(replyJid, { text: `${texts.fail}\n${e.message}\n\n${texts.footer}` }); } catch {}
+        console.log('❌ Incoming call error:', e?.message || e);
+        try {
+            if (accepted) await voip.hangup(callId);
+            else await voip.rejectCall(callId);
+        } catch {}
+        try {
+            await sock.sendMessage(replyJid, {
+                text: `${texts.fail}\n${e?.message || 'Unknown call error'}\n\n${texts.footer}`
+            });
+        } catch {}
         setTimeout(() => handled.delete(callId), 60000);
-    } finally { accepting.delete(callId); }
+    } finally {
+        accepting.delete(callId);
+    }
 }
 
 const ANSWERED_RE = /connected|active|answered|in_call|incall|established|accepted/i;
