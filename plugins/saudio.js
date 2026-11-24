@@ -157,7 +157,7 @@ function patchProto() {
     const M = proto?.Message;
     if (!M) throw new Error('Baileys protobuf Message schema is missing.');
     if (M.__godVoipAudioStickerPatched) return;
-    if (!M.StickerMessage?.encode || !M.encode || !M.FutureProofMessage?.encode) throw new Error('This Baileys version does not expose the audio-sticker protobuf encoders.');
+    if (!M.StickerMessage?.encode || !M.AudioMessage?.encode || !M.encode || !M.FutureProofMessage?.encode) throw new Error('This Baileys version does not expose the audio-sticker protobuf encoders.');
     const stickerEncode = M.StickerMessage.encode;
     M.StickerMessage.encode = function(message,writer) {
         const audio = message?.audioMessage;
