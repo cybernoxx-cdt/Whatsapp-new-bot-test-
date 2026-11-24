@@ -245,7 +245,7 @@ export default {
         if (media.kind==='audio') return reply('🖼️ Send/reply to a photo or sticker first with '+command+', then reply to the audio with '+command+'.');
         await react(ctx,'⏳');
         try {
-            const pack=(arg.split('|')[0] || ctx.config?.stickerPack || DEFAULT_PACK).trim() || DEFAULT_PACK;
+            const pack=(arg.split('|')[0] || DEFAULT_PACK).trim() || DEFAULT_PACK;
             // Keep the requested creator credit on every generated audio sticker.
             const author=STICKER_AUTHOR;
             const buffer=await download(ctx,media);
