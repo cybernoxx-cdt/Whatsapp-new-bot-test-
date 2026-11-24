@@ -157,50 +157,75 @@ async function makeAudio(sock, buffer, ext, seconds) {
     return audio;
 }
 function patchProto() {
-    const Sticker = proto?.Message?.StickerMessage;
-    const Audio = proto?.Message?.AudioMessage;
-    if (!Sticker || !Audio?.encode) throw new Error('Baileys sticker/audio protobuf schemas are unavailable.');
-
-    // Some Baileys builds already know StickerMessage.audioMessage (field 26).
-    // Older builds need this compatibility encoder. Never wrap it in the
-    // top-level audioStickerMessage field 134: that wrapper is not understood
-    // by the WhatsApp Web client used by Baileys and can render as a broken tile.
-    if (Sticker.__godVoipAudioField26Patched) return;
-    const fields = Sticker.fields || Sticker.$type?.fields;
-    if (fields?.audioMessage) {
-        Sticker.__godVoipAudioField26Patched = true;
-        return;
+    const M = proto?.Message;
+    if (!M || M.__godVoipAudioStickerPatched) return;
+    if (!M.StickerMessage?.encode || !M.AudioMessage?.encode || !M.encode || !M.FutureProofMessage?.encode) {
+        throw new Error('This @dnuzi/baileys build does not expose the required audio-sticker protobuf encoders.');
     }
 
-    if (typeof Sticker.encode !== 'function') {
-        throw new Error('Baileys StickerMessage encoder is unavailable.');
-    }
-    const originalEncode = Sticker.encode;
-    Sticker.encode = function(message, writer) {
+    // Sound stickers use BOTH layers:
+    // 1) StickerMessage.audioMessage = field 26 (tag 210)
+    // 2) Message.audioStickerMessage = FutureProofMessage field 134 (tag 1074)
+    // Keep the inner sticker payload inside the FutureProofMessage envelope.
+    const stickerEncode = M.StickerMessage.encode;
+    M.StickerMessage.encode = function(message, writer) {
         const audio = message?.audioMessage;
         if (audio) delete message.audioMessage;
-        const result = originalEncode.call(this, message, writer);
+        const result = stickerEncode.call(this, message, writer);
         if (audio) {
             message.audioMessage = audio;
-            // protobuf field 26, wire type 2
-            Audio.encode(audio, result.uint32(210).fork()).ldelim();
+            M.AudioMessage.encode(audio, result.uint32(210).fork()).ldelim();
         }
         return result;
     };
 
-    if (typeof Sticker.fromObject === 'function') {
-        const originalFromObject = Sticker.fromObject;
-        Sticker.fromObject = function(object) {
-            const result = originalFromObject.call(this, object);
+    if (typeof M.StickerMessage.fromObject === 'function') {
+        const stickerFromObject = M.StickerMessage.fromObject;
+        M.StickerMessage.fromObject = function(object) {
+            const result = stickerFromObject.call(this, object);
             if (object?.audioMessage) {
-                result.audioMessage = Audio.fromObject
-                    ? Audio.fromObject(object.audioMessage)
+                result.audioMessage = M.AudioMessage.fromObject
+                    ? M.AudioMessage.fromObject(object.audioMessage)
                     : object.audioMessage;
             }
             return result;
         };
     }
-    Sticker.__godVoipAudioField26Patched = true;
+
+    const messageEncode = M.encode;
+    M.encode = function(message, writer) {
+        const audioSticker = message?.audioStickerMessage;
+        if (audioSticker) {
+            delete message.stickerMessage;
+            delete message.audioStickerMessage;
+        }
+        const result = messageEncode.call(this, message, writer);
+        if (audioSticker) {
+            message.audioStickerMessage = audioSticker;
+            M.FutureProofMessage.encode(audioSticker, result.uint32(1074).fork()).ldelim();
+        }
+        return result;
+    };
+
+    if (typeof M.fromObject === 'function') {
+        const messageFromObject = M.fromObject;
+        M.fromObject = function(object) {
+            const result = messageFromObject.call(this, object);
+            if (object?.audioStickerMessage) {
+                const inner = object.audioStickerMessage.message || object.audioStickerMessage;
+                const nestedSticker = object.audioStickerMessage.message?.stickerMessage;
+                if (inner?.stickerMessage && nestedSticker?.audioMessage) {
+                    inner.stickerMessage.audioMessage = nestedSticker.audioMessage;
+                }
+                result.audioStickerMessage = { message: inner };
+                delete result.stickerMessage;
+                if (inner) Object.setPrototypeOf(result, inner);
+            }
+            return result;
+        };
+    }
+
+    M.__godVoipAudioStickerPatched = true;
 }
 async function sendAudioSticker(sock,jid,sticker,animated,audio) {
     patchProto();
@@ -209,14 +234,14 @@ async function sendAudioSticker(sock,jid,sticker,animated,audio) {
         { upload: sock.waUploadToServer }
     );
     if (!prepared?.stickerMessage) throw new Error('Baileys could not prepare sticker upload.');
-
     prepared.stickerMessage.isAnimated = Boolean(animated);
     prepared.stickerMessage.audioMessage = audio;
 
-    // Send a regular stickerMessage with the embedded audio field (26).
-    // Do not use audioStickerMessage (top-level field 134).
+    // Mirror the original dual-layer sound-sticker envelope expected by this
+    // bot's Baileys fork: embedded audio field 26 + top-level wrapper field 134.
     await sock.relayMessage(jid, {
-        stickerMessage: prepared.stickerMessage,
+        __proto__: prepared,
+        audioStickerMessage: { message: prepared },
         messageContextInfo: { messageSecret: randomBytes(32) }
     }, {});
 }
