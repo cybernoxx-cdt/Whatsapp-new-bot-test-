@@ -22,6 +22,8 @@ export function validateSessionDir(dir) {
     return resolved;
 }
 
+let plaintextWarningShown = false;
+
 // AES-256-GCM session encryption at rest (S6). Key from env only;
 // without a key the session is stored in plaintext with a loud warning.
 function encryptionKey() {
@@ -33,7 +35,7 @@ function encryptionKey() {
 }
 export function encryptSessionData(data) {
     const key = encryptionKey();
-    if (!key) { console.log('⚠️ SESSION_ENCRYPTION_KEY is not set — session data is stored unencrypted in MongoDB.'); return { __plaintext: true, data }; }
+    if (!key) { if (!plaintextWarningShown) { plaintextWarningShown = true; console.log('⚠️ SESSION_ENCRYPTION_KEY is not set — session data is stored unencrypted in MongoDB.'); } return { __plaintext: true, data }; }
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     const ciphertext = Buffer.concat([cipher.update(JSON.stringify(data), 'utf8'), cipher.final()]);
