@@ -78,8 +78,9 @@ async function download(ctx, media) {
 }
 async function ffmpeg(buffer, inExt, outExt, args) {
     const id = randomBytes(8).toString('hex');
-    const input = path.join(os.tmpdir(), 'godvoip_saudio_' + id + '.' + inExt);
-    const output = path.join(os.tmpdir(), 'godvoip_saudio_' + id + '.' + outExt);
+    // Always use distinct input/output paths, even when converting OGG -> OGG.
+    const input = path.join(os.tmpdir(), 'godvoip_saudio_' + id + '_input.' + inExt);
+    const output = path.join(os.tmpdir(), 'godvoip_saudio_' + id + '_output.' + outExt);
     try {
         await fs.writeFile(input, buffer);
         await exec('ffmpeg', ['-hide_banner','-loglevel','error','-y','-i',input,...args,output], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 });
