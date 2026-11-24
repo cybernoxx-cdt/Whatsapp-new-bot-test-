@@ -1205,7 +1205,7 @@ async function handleCommand(sock, m) {
         alive: '🟢', online: '🟢', bot: '🤖', info: 'ℹ️', botinfo: 'ℹ️', status: '📊',
         call: '📞', vcall: '📹', acall: '🎧', 'c-ping': '🏓', ping: '🏓', speed: '🏓',
         mode: '⚙️', self: '🔒', public: '🌐', cz: '🎬', cinesubz: '🎬',
-        vv: '👁️', viewonce: '👁️', retrieve: '📥', tourl: '🔗',
+        vv: '👁️', viewonce: '👁️', retrieve: '📥', saudio: '🔊', audiosticker: '🔊', soundsticker: '🔊', tourl: '🔗',
         jid: '🆔', check: '🔍', setpp: '🖼️', fulldp: '🖼️', pinterest: '📌',
         privacy: '🛡️', runtime: '⏱️', owner: '👑', 'media-packs': '📦',
     };
