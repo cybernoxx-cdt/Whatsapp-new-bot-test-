@@ -13,6 +13,8 @@ const proto = get('proto');
 const prepareWAMessageMedia = get('prepareWAMessageMedia');
 const downloadContentFromMessage = get('downloadContentFromMessage');
 const MAX_SEC = 25, SESSION_SEC = 60, MAX_BYTES = 80 * 1024 * 1024;
+const DEFAULT_PACK = 'SHAVIYA XMD';
+const STICKER_AUTHOR = '𝑺𝒉𝒂𝒗𝒊𝒚𝒂 𝑿𝑴𝑫 🥷';
 const sessions = globalThis.__godVoipAudioStickerSessions ||= new Map();
 const SCALE = 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000,setsar=1';
 
@@ -214,7 +216,7 @@ export default {
     aliases:['audiosticker','soundsticker'],
     category:'fun',
     desc:'Create audio stickers from videos, photos and stickers',
-    usage:'.saudio (video) | reply photo/sticker then reply audio/video | .saudio Pack|Author | .saudio batal',
+    usage:'.saudio (video) | reply photo/sticker then reply audio/video | .saudio Pack Name | .saudio batal',
     async run(ctx) {
         const sock=ctx.sock, jid=ctx.jid, m=ctx.m, reply=ctx.reply;
         const arg=String(ctx.text || '').trim(), key=sessionKey(ctx), session=sessions.get(key);
@@ -229,7 +231,7 @@ export default {
             '🎬 Video: send/reply with '+command+' to create a sticker with its audio.\n\n' +
             '🖼️ Photo/sticker: send/reply with '+command+', then reply to that media with audio/voice/video and '+command+'.\n\n' +
             '⏱️ Session: '+SESSION_SEC+' seconds\n🎵 Audio limit: '+MAX_SEC+' seconds\n' +
-            '✏️ Pack: '+command+' Pack|Author\n✖️ Cancel: '+command+' batal\n\n✦ GOD VOIP MD'
+            '✏️ Custom pack: '+command+' Pack Name\n👑 Author: '+STICKER_AUTHOR+' (automatic)\n✖️ Cancel: '+command+' batal\n\n✦ GOD VOIP MD'
         );
         if (session && (media.kind==='audio' || media.kind==='video')) {
             await react(ctx,'⏳');
@@ -243,9 +245,9 @@ export default {
         if (media.kind==='audio') return reply('🖼️ Send/reply to a photo or sticker first with '+command+', then reply to the audio with '+command+'.');
         await react(ctx,'⏳');
         try {
-            const parts=arg.split('|');
-            const pack=(parts[0] || ctx.config?.stickerPack || 'GOD VOIP MD').trim();
-            const author=(parts[1] || ctx.config?.stickerAuthor || 'GOD VOIP MD').trim();
+            const pack=(arg.split('|')[0] || ctx.config?.stickerPack || DEFAULT_PACK).trim() || DEFAULT_PACK;
+            // Keep the requested creator credit on every generated audio sticker.
+            const author=STICKER_AUTHOR;
             const buffer=await download(ctx,media);
             const sticker=await makeSticker(buffer,media.kind,pack,author);
             const animated=media.kind==='video' || (media.kind==='sticker' && media.animated);
