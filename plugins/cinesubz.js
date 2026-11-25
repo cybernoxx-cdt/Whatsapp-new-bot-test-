@@ -104,12 +104,32 @@ function formatSearch(query, movies, tvs) {
   lines.push('*━━━━━━━━━━━━━━━━━━━━*', '↪️ Reply with a number to open', '⏳ Expires in 30 minutes', '*✦ GOD VOIP MD*');
   return lines.join('\n');
 }
+function pageUrlOf(value) {
+  if (!value || typeof value !== 'object') return '';
+  for (const candidate of [value.url, value.link, value.page_url, value.pageUrl, value.episode_url, value.episodeUrl, value.href]) {
+    if (validPage(candidate)) return candidate;
+  }
+  return '';
+}
+function listFrom(data, keys) {
+  for (const key of keys) if (Array.isArray(data?.[key])) return data[key];
+  return [];
+}
 function makeTvMenu(data) {
-  const seasons = (data.seasons || []).map((season, i) => ({
-    ...season,
-    season_no: season.season_no ?? season.season ?? i + 1,
-    episodes: (season.episodes || []).filter(ep => validPage(ep.url))
-  })).filter(season => season.episodes.length);
+  const sourceSeasons = listFrom(data, ['seasons']).length
+    ? data.seasons
+    : listFrom(data?.tvshow, ['seasons']).length
+      ? data.tvshow.seasons
+      : listFrom(data?.series, ['seasons']).length
+        ? data.series.seasons
+        : listFrom(data?.tv, ['seasons']);
+  const seasons = sourceSeasons.map((season, i) => {
+    const sourceEpisodes = listFrom(season, ['episodes', 'items', 'results']);
+    const episodes = sourceEpisodes
+      .map(ep => ({ ...ep, url: pageUrlOf(ep) }))
+      .filter(ep => validPage(ep.url));
+    return { ...season, season_no: season.season_no ?? season.season ?? season.number ?? i + 1, episodes };
+  }).filter(season => season.episodes.length);
   const choices = [];
   const lines = ['*╭━━〔 📺 CINESUBZ TV SERIES 〕━━╮*', '', bold(data.title || 'TV Series'), ''];
   for (let si = 0; si < seasons.length; si++) {
@@ -268,10 +288,30 @@ async function openTv(c, item) {
   await sendInfoCard(c, merged, item, 'tv');
   return prompt(c, menu.text);
 }
+function optionPageUrl(option) {
+  if (!option || typeof option !== 'object') return '';
+  for (const candidate of [option.link, option.url, option.page_url, option.pageUrl, option.download_page, option.downloadPage, option.href]) {
+    if (validPage(candidate)) return candidate;
+  }
+  return '';
+}
+function episodeQualityOptions(data) {
+  const candidates = [
+    data?.dl_links, data?.downloadLinks, data?.download_links,
+    data?.qualities, data?.options, data?.links,
+    data?.episode?.dl_links, data?.episode?.downloadLinks
+  ];
+  const source = candidates.find(Array.isArray) || [];
+  return source
+    .filter(option => option && typeof option === 'object')
+    .map(option => ({ ...option, link: optionPageUrl(option) }))
+    .filter(option => validPage(option.link));
+}
 async function getEpisodeOptions(episode) {
-  if (!validPage(episode?.url)) throw new Error('Invalid episode URL');
-  const data = await api('episode', { url: episode.url });
-  const options = (data.dl_links || []).filter(x => validPage(x.link || x.url));
+  const episodeUrl = pageUrlOf(episode);
+  if (!validPage(episodeUrl)) throw new Error('Invalid episode page URL');
+  const data = await api('episode', { url: episodeUrl });
+  const options = episodeQualityOptions(data);
   return { data, options };
 }
 async function openEpisode(c, episode, title) {
@@ -284,13 +324,31 @@ async function openEpisode(c, episode, title) {
   return prompt(c, lines.join('\n'));
 }
 async function resolveDirect(option, type = 'episode') {
-  const pageUrl = option?.link || option?.url;
+  const pageUrl = optionPageUrl(option);
   if (!validPage(pageUrl)) throw new Error('Invalid download page URL');
   const data = await api('download', { url: pageUrl, type });
-  const links = (data.dl_links || []).filter(x => validDirect(x?.url));
+  const candidates = [
+    data?.dl_links, data?.downloadLinks, data?.download_links,
+    data?.links, data?.downloads, data?.servers
+  ];
+  const source = candidates.find(Array.isArray) || [];
+  const links = source.map(item => {
+    if (typeof item === 'string') return { url: item, type: '' };
+    return {
+      ...item,
+      url: item?.url || item?.link || item?.download_url || item?.downloadUrl || item?.direct_url || item?.directUrl || ''
+    };
+  }).filter(item => validDirect(item.url));
+  const single = data?.downloadUrl || data?.download_url || data?.directUrl || data?.direct_url || data?.url;
+  if (validDirect(single)) links.unshift({ url: single, type: 'direct' });
   if (!links.length) throw new Error('Download API did not return a valid direct media URL');
-  const preferred = links.find(x => /direct/i.test(x.type || '')) || links[0];
-  return { url: preferred.url, name: data.name || option.info || 'CineSubz Episode', size: data.size || sizeLabel(option), quality: qualityLabel(option) };
+  const preferred = links.find(x => /direct/i.test(x.type || x.server || '')) || links[0];
+  return {
+    url: preferred.url,
+    name: data.name || data.title || option.info || option.quality || 'CineSubz Episode',
+    size: data.size || preferred.size || sizeLabel(option),
+    quality: qualityLabel(option)
+  };
 }
 async function sendMedia(c, media, episode, index, total) {
   const epNo = episode.episode_no ?? index + 1;
@@ -364,8 +422,8 @@ async function prepareSeason(c, session, seasonIndex) {
   setSession(c, { mode: 'bulk_quality', title: session.title, season, episodeData: ready, failedEpisodes: episodeData.length - ready.length, qualities });
   const lines = ['*╭━━〔 📦 SEASON QUALITY MENU 〕━━╮*', '', bold(session.title), '📺 *Season:* ' + bold(season.season_no), '🎞️ *Episodes ready:* ' + bold(ready.length + '/' + season.episodes.length), '', '*Choose quality for all episodes:*'];
   lines.push(numbered(qualities, q => '🎥 ' + bold(q.label)));
-  lines.push('', '↪️ Reply with a number to send every episode as an MP4 document', '⚠️ Files will be sent one by one', '*✦ GOD VOIP MD*');
-  return say(c, lines.join('\n'));
+  lines.push('', '↪️ Reply directly to THIS quality menu with a number', '⚠️ Files will be sent one by one', '✦ *GOD VOIP MD*');
+  return prompt(c, lines.join('\n'));
 }
 function selectEpisodeOption(item, quality) {
   const exact = item.options.find(option => qualityKey(option) === quality.key);
@@ -445,9 +503,20 @@ async function choose(c, number) {
 async function plainReply(c, text) {
   const value = String(text || '').trim();
   const state = getSession(c);
-  const contextInfo = c.m?.message?.extendedTextMessage?.contextInfo
-    || c.m?.message?.imageMessage?.contextInfo
-    || c.m?.message?.videoMessage?.contextInfo
+  let message = c.m?.message || {};
+  // Handle ephemeral / view-once wrappers before reading the quoted menu ID.
+  for (let i = 0; i < 6; i++) {
+    const wrapped = message.ephemeralMessage?.message
+      || message.viewOnceMessage?.message
+      || message.viewOnceMessageV2?.message
+      || message.documentWithCaptionMessage?.message;
+    if (!wrapped) break;
+    message = wrapped;
+  }
+  const contextInfo = message?.extendedTextMessage?.contextInfo
+    || message?.imageMessage?.contextInfo
+    || message?.videoMessage?.contextInfo
+    || message?.documentMessage?.contextInfo
     || {};
   const repliedTo = contextInfo.stanzaId;
 
@@ -460,7 +529,8 @@ async function plainReply(c, text) {
     return false;
   }
 
-  // Accept only a reply to the exact active menu message.
+  // Accept only a reply to the exact active menu message. This prevents a
+  // stale number from a previous movie/series flow selecting the wrong item.
   if (!/^\d{1,3}$/.test(value) || !state || !state.promptId || repliedTo !== state.promptId) return false;
   if (state.busy) return true;
 
