@@ -265,7 +265,7 @@ async function openMovie(c, item) {
   const rawLinks = [
     data?.downloadLinks, data?.download_links, data?.dl_links,
     data?.qualities, data?.options, data?.links
-  ].find(Array.isArray) || [];
+  ].find(value => Array.isArray(value) && value.length) || [];
   const links = rawLinks
     .map(option => typeof option === 'string' ? option : ({ ...option, link: optionPageUrl(option) }))
     .filter(option => !!optionPageUrl(option));
@@ -309,7 +309,7 @@ function episodeQualityOptions(data) {
     data?.qualities, data?.options, data?.links,
     data?.episode?.dl_links, data?.episode?.downloadLinks
   ];
-  const source = candidates.find(Array.isArray) || [];
+  const source = candidates.find(value => Array.isArray(value) && value.length) || [];
   return source
     .filter(option => option && typeof option === 'object')
     .map(option => ({ ...option, link: optionPageUrl(option) }))
