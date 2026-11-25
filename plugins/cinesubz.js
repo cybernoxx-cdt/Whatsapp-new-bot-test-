@@ -81,7 +81,8 @@ function numbered(items, render) {
   return items.map((item, i) => '*' + (i + 1) + '.* ' + render(item)).join('\n');
 }
 function qualityLabel(option) {
-  return clean(option?.info || option?.quality || option?.name || option?.type || 'Available quality', 130);
+  if (typeof option === 'string') return clean(option, 130);
+  return clean(option?.info || option?.quality || option?.name || option?.type || option?.label || 'Available quality', 130);
 }
 function qualityKey(option) {
   const label = qualityLabel(option);
@@ -261,7 +262,13 @@ async function sendInfoCard(c, data, item, kind) {
 
 async function openMovie(c, item) {
   const data = await api('info', { url: item.url });
-  const links = data.downloadLinks || data.download_links || data.dl_links || [];
+  const rawLinks = [
+    data?.downloadLinks, data?.download_links, data?.dl_links,
+    data?.qualities, data?.options, data?.links
+  ].find(Array.isArray) || [];
+  const links = rawLinks
+    .map(option => typeof option === 'string' ? option : ({ ...option, link: optionPageUrl(option) }))
+    .filter(option => !!optionPageUrl(option));
   setSession(c, { mode: 'movie', title: data.title || item.title, links });
   await sendInfoCard(c, data, item, 'movie');
   if (links.length) {
@@ -289,6 +296,7 @@ async function openTv(c, item) {
   return prompt(c, menu.text);
 }
 function optionPageUrl(option) {
+  if (typeof option === 'string') return validPage(option) ? option : '';
   if (!option || typeof option !== 'object') return '';
   for (const candidate of [option.link, option.url, option.page_url, option.pageUrl, option.download_page, option.downloadPage, option.href]) {
     if (validPage(candidate)) return candidate;
@@ -350,12 +358,12 @@ async function resolveDirect(option, type = 'episode') {
     quality: qualityLabel(option)
   };
 }
-async function sendMedia(c, media, episode, index, total) {
+async function sendMedia(c, media, episode, index, total, seriesTitle = 'CineSubz Series') {
   const epNo = episode.episode_no ?? index + 1;
   const epTitle = clean(episode.title || 'Episode ' + epNo, 90);
   const baseName = String(media.name || ('Episode ' + epNo)).replace(/\.mp4$/i, '');
   const fileName = clean(baseName + '.mp4', 150).replace(/[\\/:*?"<>|]/g, '_');
-  const caption = '📺 *' + clean(c._seriesTitle || 'CineSubz Series', 100) + '*\n' +
+  const caption = '📺 *' + clean(seriesTitle || 'CineSubz Series', 100) + '*\n' +
     '🎞️ *Episode ' + epNo + ':* ' + epTitle + '\n' +
     '🎥 *Quality:* ' + clean(media.quality, 100) + '\n' +
     (media.size ? '💾 *Size:* ' + clean(media.size, 40) + '\n' : '') +
@@ -377,7 +385,7 @@ async function downloadOne(c, session, option) {
   if (session.mode === 'movie_quality') {
     await c.sock.sendMessage(c.jid, { document: { url: media.url }, mimetype: 'video/mp4', fileName: clean(String(media.name || '').replace(/\.mp4$/i, ''), 150) + '.mp4', caption: '🎬 *' + clean(session.title, 120) + '*\n🎥 *Quality:* ' + clean(media.quality, 100) + '\n✦ *GOD VOIP MD*' }, { quoted: c.m });
   } else {
-    await sendMedia(c, media, session.episode, 0, 1);
+    await sendMedia(c, media, session.episode, 0, 1, session.title);
   }
   await react(c, '✅');
   await say(c, '*✅ MP4 sent successfully.*');
@@ -434,11 +442,12 @@ function selectEpisodeOption(item, quality) {
 async function deliverSeason(c, session, quality) {
   const total = session.episodeData.length;
   const cancelKey = sessionKey(c);
+  const startAt = Math.max(0, Math.min(total, Number(session.lastDelivered || session.cancelledAt || 0)));
   cancelledSeasons.delete(cancelKey);
   await react(c, '⬇️');
-  await say(c, '📦 *Starting Season ' + clean(session.season.season_no, 10) + ' MP4 delivery…*\n🎥 Quality: ' + bold(quality.label) + '\n📺 Files: *' + total + '*\n\nFiles are sent one by one. Keep the chat open.');
+  await say(c, '📦 *Starting Season ' + clean(session.season.season_no, 10) + ' MP4 delivery…*\n🎥 Quality: ' + bold(quality.label) + '\n📺 Remaining files: *' + (total - startAt) + '/' + total + '*\n\nFiles are sent one by one. Keep the chat open.');
   let sent = 0, failed = [];
-  for (let i = 0; i < total; i++) {
+  for (let i = startAt; i < total; i++) {
     if (cancelledSeasons.has(cancelKey)) {
       setSession(c, { ...session, mode: 'bulk_quality', cancelledAt: i, sent });
       await say(c, '*⏹️ Season delivery cancelled.*\n✅ Sent: *' + sent + '/' + total + '*\nReply with the quality number again to resume from episode ' + (i + 1) + '.');
@@ -448,7 +457,7 @@ async function deliverSeason(c, session, quality) {
     try {
       const option = selectEpisodeOption(item, quality);
       const media = await resolveDirect(option, 'episode');
-      await sendMedia(c, media, item.episode, i, total);
+      await sendMedia(c, media, item.episode, i, total, session.title);
       sent++;
       await react(c, '📤');
     } catch (error) {
