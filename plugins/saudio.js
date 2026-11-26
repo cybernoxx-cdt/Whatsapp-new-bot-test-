@@ -12,7 +12,7 @@ const get = n => B[n] ?? B.default?.[n] ?? B.default?.default?.[n];
 const proto = get('proto');
 const prepareWAMessageMedia = get('prepareWAMessageMedia');
 const downloadContentFromMessage = get('downloadContentFromMessage');
-const MAX_SEC = 25, MAX_AUDIO_SEC = 10, SESSION_SEC = 60, MAX_BYTES = 80 * 1024 * 1024;
+const MAX_SEC = 25, MAX_AUDIO_SEC = 25, SESSION_SEC = 60, MAX_BYTES = 80 * 1024 * 1024;
 const DEFAULT_PACK = 'SHAVIYA XMD';
 const STICKER_AUTHOR = '𝑺𝒉𝒂𝒗𝒊𝒚𝒂 𝑿𝑴𝑫 🥷';
 const sessions = globalThis.__godVoipAudioStickerSessions ||= new Map();
@@ -145,7 +145,7 @@ async function makeSticker(buffer, kind, pack, author) {
 async function makeAudio(sock, buffer, ext, seconds) {
     const data = await ffmpeg(buffer,ext,'ogg',['-vn','-map','0:a:0','-t',String(MAX_AUDIO_SEC),
         '-af','aresample=48000:async=1:first_pts=0','-c:a','libopus','-b:a','48k','-vbr','on',
-        '-compression_level','10','-ac','1','-ar','48000','-application','voip','-avoid_negative_ts','make_zero','-f','ogg']);
+        '-compression_level','10','-ac','1','-ar','48000','-application','audio','-avoid_negative_ts','make_zero','-f','ogg']);
     if (data.length < 200) throw new Error('Audio is empty or too short.');
     if (typeof prepareWAMessageMedia !== 'function') throw new Error('@dnuzi/baileys prepareWAMessageMedia export is missing.');
     const prepared = await prepareWAMessageMedia({audio:data,mimetype:'audio/ogg; codecs=opus',ptt:true},{upload:sock.waUploadToServer});
