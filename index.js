@@ -7,6 +7,7 @@ import * as B from '@dnuzi/baileys';
 import Voip from '@dnuzi/baileys/voip';
 import fs from 'fs';
 import crypto from 'crypto';
+import sharp from 'sharp';
 import path from 'path';
 import mongoose from 'mongoose';
 import express from 'express';
