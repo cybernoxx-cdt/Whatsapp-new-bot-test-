@@ -41,7 +41,7 @@ export default {
                 '',
                 '*OUTGOING CALLS · OWNER*',
                 `▫️ Video: \`${prefix}vcall 94771234567\``,
-                `▫️ Audio: \\`${prefix}acall 94771234567\\``,
+                `▫️ Audio: \`${prefix}acall 94771234567\``,
                 `▫️ Multiple: \`${prefix}acall 9477...,9476...\``,
                 '',
                 '*TOOLS*',
