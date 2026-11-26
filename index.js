@@ -130,6 +130,35 @@ for (const bin of [FFMPEG, FFPROBE]) {
 setBinaries({ ffmpeg: FFMPEG, ffprobe: FFPROBE });
 cleanCache();
 
+// ================= GLOBAL STICKER REACTION =================
+// One shared reaction for commands and interactive plugin replies.
+async function sendStickerReaction(sock, jid, messageKey) {
+    try {
+        if (!sock?.relayMessage || !jid || !messageKey) return false;
+        await sock.relayMessage(jid, {
+            messageContextInfo: {
+                messageAssociation: {
+                    associationType: 11,
+                    parentMessageKey: messageKey,
+                },
+            },
+            stickerMessage: {
+                url: 'https://mmg.whatsapp.net/v/t62.15575-24/818766779_1129097639778153_6590267083545743956_n.enc?ccb=11-4&oh=01_Q5Aa5gHNe2HdbLE-cWkJXND2kbQ-dPCK_OUE8yMZftwYLe7BsQ&oe=6ADAC196&_nc_sid=5e03e0&mms3=true',
+                fileSha256: 'Uoa2mnXeustnlPHuKU4SBDRzKn/Tfi7Yn8zDAbYCnos=',
+                fileEncSha256: 'L2lSGKLAk7SXkVhBHuNwy2gyET1OhAcR8O7hTmFx0Ss=',
+                mediaKey: 'rsI+FYArjYdzSdlGH4R6G5OUviYNZmBrFvoAitAlI7U=',
+                mimetype: 'application/was',
+                directPath: '/v/t62.15575-24/818766779_1129097639778153_6590267083545743956_n.enc?ccb=11-4&oh=01_Q5Aa5gHNe2HdbLE-cWkJXND2kbQ-dPCK_OUE8yMZftwYLe7BsQ&oe=6ADAC196&_nc_sid=5e03e0',
+                isLottie: true,
+            },
+        }, {});
+        return true;
+    } catch (error) {
+        console.log('[STICKER REACTION]', error?.message || error);
+        return false;
+    }
+}
+
 // ================= MESSAGE STYLES =================
 const statusIcon = () => (CALL_ON ? '🟢 *ON*' : '🔴 *OFF*');
 
@@ -1201,7 +1230,7 @@ async function handleCommand(sock, m) {
                     state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
                 });
                 if (handled) {
-                    try { await sock.sendMessage(jid, { react: { text: '✅', key: m.key } }); } catch {}
+                    await sendStickerReaction(sock, jid, m.key);
                     return;
                 }
             } catch (error) {
@@ -1223,20 +1252,8 @@ async function handleCommand(sock, m) {
     const allowed = isOwner || publicAllowed;
     if (!allowed) return;
 
-    // Every recognized command gets a matching reaction before it runs.
-    const commandReactions = {
-        menu: '📋', help: '📋', commands: '📋', 'call-menu': '📞', callmenu: '📞',
-        alive: '🟢', online: '🟢', bot: '🤖', info: 'ℹ️', botinfo: 'ℹ️', status: '📊',
-        call: '📞', vcall: '📹', acall: '🎧', 'c-ping': '🏓', ping: '🏓', speed: '🏓',
-        mode: '⚙️', self: '🔒', public: '🌐', cz: '🎬', cinesubz: '🎬',
-        vv: '👁️', viewonce: '👁️', retrieve: '📥', saudio: '🔊', audiosticker: '🔊', soundsticker: '🔊', tourl: '🔗',
-        jid: '🆔', check: '🔍', setpp: '🖼️', fulldp: '🖼️', pinterest: '📌',
-        privacy: '🛡️', runtime: '⏱️', owner: '👑', 'media-packs': '📦',
-    };
-    const categoryReactions = { download: '📥', search: '🔎', tools: '🛠️', utility: '⚙️', ai: '🤖', fun: '🎮', group: '👥', owner: '👑', media: '🎬' };
-    const reactionEmoji = plugin?.react || commandReactions[name] || categoryReactions[plugin?.category] || '⚡';
-    try { await sock.sendMessage(jid, { react: { text: reactionEmoji, key: m.key } }); }
-    catch (error) { console.log('[COMMAND REACTION]', error?.message || error); }
+    // Every recognized command uses the same sticker-reaction system.
+    await sendStickerReaction(sock, jid, m.key);
 
     const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
 
