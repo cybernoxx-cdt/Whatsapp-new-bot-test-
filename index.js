@@ -879,9 +879,9 @@ function queueVoipDial(voip, number, file, kind) {
         await waitForVoipSlot(voip);
         if (VOIP !== voip) throw new Error('VoIP connection changed before dialing.');
 
-        // Use the documented single-file overloads from @dnuzi/baileys 0.1.3.
-        // Video must be passed as a single local file with the resolution as arg 3;
-        // wrapping it in a one-item playlist selects a different API path.
+        // Use the documented native media overload: MP4 + resolution starts
+        // both the outgoing video and its audio track inside the VoIP engine.
+        // Do not attach a second coordinator video feeder here.
         if (kind === 'video') {
             return voip.call(number, file, config.voip.callResolution || '480p');
         }
@@ -1118,29 +1118,6 @@ async function resolveDialMedia(kind, url) {
     return prepared;
 }
 
-async function startOutgoingVideoTrack(voip, call, prepared) {
-    const callId = call?.callId ?? call?.id;
-    if (!callId || prepared.kind !== 'video') return;
-    let started = false;
-    const start = async () => {
-        if (started || endedCalls.has(callId)) return;
-        started = true;
-        try {
-            // voip.call() handles call setup/audio; the coordinator video track
-            // must be explicitly loaded for the remote peer to receive pictures.
-            await voip.coordinator.loadVideo(callId, prepared.file);
-            console.log('🎥 [MANUAL VIDEO] coordinator.loadVideo started:', callId, prepared.file);
-        } catch (error) {
-            console.error('❌ [MANUAL VIDEO] loadVideo failed:', error?.stack || error);
-            try { await call.hangup(); } catch {}
-        }
-    };
-    call.on('connected', () => { void start(); });
-    // Some builds may emit connected before listeners are attached.
-    const state = String(call.state || call.status || '').toLowerCase();
-    if (/connected|active|answered|in.?call/.test(state)) void start();
-}
-
 async function dialPrepared(kind, number, prepared) {
     await waitForVoip();
     console.log(`📞 Starting outgoing ${kind} call to ${number}`);
@@ -1157,7 +1134,6 @@ async function dialPrepared(kind, number, prepared) {
     call.on('connected', () => console.log(`✅ ${kind} call connected:`, callId));
     call.on('ended', reason => console.log(`📴 ${kind} call ended:`, reason || ''));
     call.on('error', error => console.error(`❌ ${kind} call error:`, error?.message || error));
-    if (kind === 'video') await startOutgoingVideoTrack(voip, call, prepared);
     await armAutoHangup(call, prepared.file, `manual ${kind} ${callId}`);
     return call;
 }
@@ -1406,7 +1382,9 @@ async function handleCommand(sock, m) {
                     state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
                 });
                 if (handled) {
-                    await sendStickerReaction(sock, jid, m.key, activePlugin.name);
+                    // Reactions are cosmetic: never hold up the next command
+                    // while downloading/resizing/uploading an animated sticker.
+                    void sendStickerReaction(sock, jid, m.key, activePlugin.name);
                     return;
                 }
             } catch (error) {
@@ -1429,7 +1407,8 @@ async function handleCommand(sock, m) {
     if (!allowed) return;
 
     // Every recognized command uses the same sticker-reaction system.
-    await sendStickerReaction(sock, jid, m.key, name);
+    // Keep command replies responsive; sticker generation/upload runs in background.
+    void sendStickerReaction(sock, jid, m.key, name);
 
     const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
 
@@ -1533,6 +1512,8 @@ async function start() {
         printQRInTerminal: false,
         getMessage: async (key) => getCachedMessage(key?.id)?.message,
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        performanceMode: 'high',
+        syncFullHistory: false,
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
