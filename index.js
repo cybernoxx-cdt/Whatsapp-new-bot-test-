@@ -184,6 +184,7 @@ const REACTION_GROUPS = {
 
 const reactionStickerCache = new Map();
 const reactionStickerInflight = new Map();
+const reactionMessageCache = new Map(); // already-uploaded encrypted sticker payloads
 const lastReactionStickerByChat = new Map();
 
 function getReactionGroup(commandName = '') {
@@ -286,33 +287,84 @@ async function sendStickerReaction(sock, jid, messageKey, commandName = '') {
         }
 
         const selected = chooseReactionSticker(jid, commandName);
-        const stickerBuffer = await getReactionStickerBuffer(selected.url);
-        const generated = await B.generateWAMessage(
-            jid,
-            { sticker: stickerBuffer },
-            {
-                userJid: sock.user?.id,
-                upload: sock.waUploadToServer,
-                logger: sock.logger,
-                mediaCache: sock.mediaCache,
-            }
-        );
+        let outgoingMessage;
+        let messageId;
+        const cached = reactionMessageCache.get(selected.id);
+        const cacheValid = cached && (Date.now() - cached.createdAt) < 6 * 60 * 60 * 1000;
 
-        if (!generated?.message || !generated?.key?.id) {
-            throw new Error('Baileys did not generate the sticker message');
+        if (cacheValid) {
+            // The encrypted WebP was already uploaded to WhatsApp once.
+            // Reuse its mediaKey/directPath and only generate a fresh message ID.
+            outgoingMessage = structuredClone(cached.message);
+            messageId = crypto.randomBytes(11).toString('hex').toUpperCase();
+        } else {
+            const stickerBuffer = await getReactionStickerBuffer(selected.url);
+            const generated = await B.generateWAMessage(
+                jid,
+                { sticker: stickerBuffer },
+                {
+                    userJid: sock.user?.id,
+                    upload: sock.waUploadToServer,
+                    logger: sock.logger,
+                    mediaCache: sock.mediaCache,
+                }
+            );
+
+            if (!generated?.message || !generated?.key?.id) {
+                throw new Error('Baileys did not generate the sticker message');
+            }
+
+            outgoingMessage = generated.message;
+            messageId = generated.key.id;
+            reactionMessageCache.set(selected.id, {
+                message: structuredClone(generated.message),
+                createdAt: Date.now(),
+            });
+            while (reactionMessageCache.size > 32) {
+                reactionMessageCache.delete(reactionMessageCache.keys().next().value);
+            }
         }
 
-        generated.message.messageContextInfo = {
-            ...(generated.message.messageContextInfo || {}),
+        outgoingMessage.messageContextInfo = {
+            ...(outgoingMessage.messageContextInfo || {}),
             messageAssociation: {
                 associationType: 11,
                 parentMessageKey: messageKey,
             },
         };
 
-        await sock.relayMessage(jid, generated.message, {
-            messageId: generated.key.id,
-        });
+        try {
+            await sock.relayMessage(jid, outgoingMessage, { messageId });
+        } catch (relayError) {
+            // A cached WhatsApp media path can expire. Refresh it once, then
+            // cache the replacement for subsequent reactions.
+            if (!cacheValid) throw relayError;
+            reactionMessageCache.delete(selected.id);
+            const stickerBuffer = await getReactionStickerBuffer(selected.url);
+            const generated = await B.generateWAMessage(
+                jid,
+                { sticker: stickerBuffer },
+                {
+                    userJid: sock.user?.id,
+                    upload: sock.waUploadToServer,
+                    logger: sock.logger,
+                    mediaCache: sock.mediaCache,
+                }
+            );
+            if (!generated?.message || !generated?.key?.id) throw relayError;
+            generated.message.messageContextInfo = {
+                ...(generated.message.messageContextInfo || {}),
+                messageAssociation: {
+                    associationType: 11,
+                    parentMessageKey: messageKey,
+                },
+            };
+            reactionMessageCache.set(selected.id, {
+                message: structuredClone(generated.message),
+                createdAt: Date.now(),
+            });
+            await sock.relayMessage(jid, generated.message, { messageId: generated.key.id });
+        }
         return true;
     } catch (error) {
         console.log('[ANIMATED STICKER REACTION]', error?.message || error);
