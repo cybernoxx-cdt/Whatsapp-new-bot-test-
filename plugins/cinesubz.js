@@ -79,6 +79,55 @@ async function api(endpoint, params = {}) {
 function numbered(items, render) {
   return items.map((item, i) => '*' + (i + 1) + '.* ' + render(item)).join('\n');
 }
+async function sendNativeList(c, title, rows, fallbackText) {
+  const safeRows = rows.slice(0, 10).map((row, i) => ({
+    title: clean(row.title, 48) || 'Option ' + (i + 1),
+    description: clean(row.description || '', 72),
+    id: 'cz:' + (i + 1)
+  }));
+  if (safeRows.length) {
+    try {
+      await c.sock.sendMessage(c.jid, {
+        text: clean(title, 100),
+        footer: '✦ GOD VOIP MD',
+        nativeFlow: [{
+          text: '✨ Choose an option',
+          sections: [{ title: '🎬 Available options', rows: safeRows }]
+        }]
+      }, { quoted: c.m });
+    } catch (error) {
+      console.error('[CINESUBZ NATIVE LIST]', error?.message || error);
+    }
+  }
+  return prompt(c, fallbackText);
+}
+async function sendSearchCarousel(c, items) {
+  const cards = [];
+  for (let i = 0; i < Math.min(items.length, 10); i++) {
+    const item = items[i];
+    const poster = imageFrom([item]) || await pagePoster(item.url);
+    if (!poster) continue;
+    cards.push({
+      image: { url: poster },
+      title: clean(item.title, 70),
+      caption: item.kind === 'tv' ? '📺 TV Series' : '🎬 Movie',
+      nativeFlow: [{ text: '✨ Open details', id: 'cz:' + (i + 1) }]
+    });
+  }
+  if (cards.length >= 2) {
+    try {
+      await c.sock.sendMessage(c.jid, {
+        text: '🎬 CINESUBZ — Choose your movie or TV series',
+        footer: 'Swipe to explore • GOD VOIP MD',
+        cards
+      }, { quoted: c.m });
+      return true;
+    } catch (error) {
+      console.error('[CINESUBZ CAROUSEL]', error?.message || error);
+    }
+  }
+  return false;
+}
 function qualityLabel(option) {
   if (typeof option === 'string') return clean(option, 130);
   return clean(option?.info || option?.quality || option?.name || option?.type || option?.label || 'Available quality', 130);
@@ -155,7 +204,12 @@ async function search(c, query, filter = 'all') {
   const items = [...movies.map(x => ({ ...x, kind: 'movie' })), ...tvs.map(x => ({ ...x, kind: 'tv' }))];
   if (!items.length) return say(c, '*😕 No results found. Try another title.*');
   setSession(c, { mode: 'search', items });
-  return prompt(c, formatSearch(data.query || query, movies, tvs));
+  await sendSearchCarousel(c, items);
+  const rows = items.map((item, i) => ({
+    title: (item.kind === 'tv' ? '📺 ' : '🎬 ') + item.title,
+    description: item.kind === 'tv' ? 'TV Series • Open seasons and episodes' : 'Movie • View download qualities'
+  }));
+  return sendNativeList(c, '🎬 CINESUBZ Search Results', rows, formatSearch(data.query || query, movies, tvs));
 }
 
 function firstValue(objects, keys) {
@@ -272,7 +326,7 @@ async function openMovie(c, item) {
   await sendInfoCard(c, data, item, 'movie');
   if (links.length) {
     const lines = ['*⬇️ MOVIE DOWNLOAD QUALITIES*', numbered(links.slice(0, 10), qualityLabel), '', '↪️ Reply with a quality number'];
-    return prompt(c, lines.join('\n'));
+    return sendNativeList(c, '⬇️ Choose movie quality', links.slice(0, 10).map(option => ({ title: '🎥 ' + qualityLabel(option), description: sizeLabel(option) ? '💾 ' + sizeLabel(option) : 'Download this quality' })), lines.join('\n'));
   }
   return say(c, '*❌ No download qualities found for this movie.*');
 }
@@ -292,7 +346,9 @@ async function openTv(c, item) {
   }
   setSession(c, { mode: 'tv', seasons: menu.seasons, choices: menu.choices, title: merged.title });
   await sendInfoCard(c, merged, item, 'tv');
-  return prompt(c, menu.text);
+  return sendNativeList(c, '📺 Choose a season or episode', menu.choices.map(choice => choice.type === 'bulk'
+    ? ({ title: '📦 Season ' + clean(menu.seasons[choice.seasonIndex]?.season_no, 10) + ' — All Episodes', description: 'Choose one quality for the full season' })
+    : ({ title: '🎞️ Episode ' + clean(choice.episode.episode_no || '', 8), description: clean(choice.episode.title || 'Select episode', 72) })), menu.text);
 }
 function optionPageUrl(option) {
   if (typeof option === 'string') return validPage(option) ? option : '';
@@ -328,7 +384,7 @@ async function openEpisode(c, episode, title) {
   const lines = ['*╭━━〔 🎞️ SELECT EPISODE QUALITY 〕━━╮*', '', bold(result.data.title || episode.title || 'Episode'), ''];
   lines.push(numbered(result.options.slice(0, 10), option => '🎥 ' + bold(qualityLabel(option)) + (sizeLabel(option) ? ' • 💾 ' + bold(sizeLabel(option)) : '')));
   lines.push('', '↪️ Reply with a number to download this episode', '*✦ GOD VOIP MD*');
-  return prompt(c, lines.join('\n'));
+  return sendNativeList(c, '🎞️ Choose episode quality', result.options.slice(0, 10).map(option => ({ title: '🎥 ' + qualityLabel(option), description: sizeLabel(option) ? '💾 ' + sizeLabel(option) : 'Download episode' })), lines.join('\n'));
 }
 async function resolveDirect(option, type = 'episode') {
   const pageUrl = optionPageUrl(option);
@@ -429,7 +485,7 @@ async function prepareSeason(c, session, seasonIndex) {
   const lines = ['*╭━━〔 📦 SEASON QUALITY MENU 〕━━╮*', '', bold(session.title), '📺 *Season:* ' + bold(season.season_no), '🎞️ *Episodes ready:* ' + bold(ready.length + '/' + season.episodes.length), '', '*Choose quality for all episodes:*'];
   lines.push(numbered(qualities, q => '🎥 ' + bold(q.label)));
   lines.push('', '↪️ Reply directly to THIS quality menu with a number', '⚠️ Files will be sent one by one', '✦ *GOD VOIP MD*');
-  return prompt(c, lines.join('\n'));
+  return sendNativeList(c, '📦 Choose season download quality', qualities.map(q => ({ title: '🎥 ' + q.label, description: '📺 All episodes • Season ' + clean(season.season_no, 10) })), lines.join('\n'));
 }
 function selectEpisodeOption(item, quality) {
   const exact = item.options.find(option => qualityKey(option) === quality.key);
@@ -526,6 +582,30 @@ async function plainReply(c, text) {
     || message?.documentMessage?.contextInfo
     || {};
   const repliedTo = contextInfo.stanzaId;
+
+  // Native-flow list rows and carousel buttons return paramsJson; accept our
+  // stable CZ:index IDs as well as legacy quoted numeric replies.
+  let nativeId = value;
+  if (nativeId.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(nativeId);
+      nativeId = parsed.id || parsed.selectedId || parsed.rowId || parsed.value || '';
+    } catch {}
+  }
+  const nativeMatch = String(nativeId).match(/^cz:(\\d{1,3})$/i);
+  if (nativeMatch && state && !state.busy) {
+    setSession(c, { ...state, busy: true });
+    try { return await choose(c, Number(nativeMatch[1])); }
+    catch (error) {
+      console.error('[CINESUBZ INTERACTIVE]', error?.stack || error);
+      await react(c, '⚠️');
+      await say(c, '*❌ CineSubz error:* ' + bold(error.message || 'Unknown error'));
+      return true;
+    } finally {
+      const current = getSession(c);
+      if (current?.busy) setSession(c, { ...current, busy: false });
+    }
+  }
 
   if (/^cancel$/i.test(value)) {
     if (state && state.mode === 'bulk_quality') {
