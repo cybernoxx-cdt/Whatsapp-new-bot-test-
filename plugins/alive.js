@@ -25,7 +25,10 @@ export default {
         try {
             await sock.sendMessage(jid, {
                 image: { url: randomMenuImage() },
-                caption,
+                caption: `🟢 ${config.botName} · ONLINE`,
+            }, { quoted: m });
+            await sock.sendMessage(jid, {
+                text: caption,
                 footer: config.texts.footer,
                 nativeFlow: [
                     { text: '📚 Open Menu', id: `${prefix}menu` },
