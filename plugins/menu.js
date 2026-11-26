@@ -103,9 +103,20 @@ export default {
             footer,
         ].join('\n');
 
+        // Send the artwork separately. Keep native-flow controls on a
+        // text message so clients that suppress media-header flows still show
+        // the actual menu buttons.
+        try {
+            await sock.sendMessage(jid, {
+                image: { url: randomMenuImage() },
+                caption: `👑 ${config.botName} · ADVANCED CONTROL PANEL`,
+            }, { quoted: m });
+        } catch (error) {
+            console.log('[MENU ARTWORK] Image skipped:', error?.message || error);
+        }
+
         return sendInteractive(sock, jid, m, {
-            image: { url: randomMenuImage() },
-            caption,
+            text: caption,
             footer,
             nativeFlow: [
                 { text: '📞 Call Controls', id: `${prefix}menu calls` },
