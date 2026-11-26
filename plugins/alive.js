@@ -23,7 +23,16 @@ export default {
             config.texts.footer,
         ].join('\n');
         try {
-            await sock.sendMessage(jid, { image: { url: randomMenuImage() }, caption }, { quoted: m });
+            await sock.sendMessage(jid, {
+                image: { url: randomMenuImage() },
+                caption,
+                footer: config.texts.footer,
+                nativeFlow: [
+                    { text: '📚 Open Menu', id: `${prefix}menu` },
+                    { text: '📊 Bot Info', id: `${prefix}info` },
+                    { text: '📞 Call Controls', id: `${prefix}menu calls` },
+                ],
+            }, { quoted: m });
         } catch (error) {
             console.log('[ALIVE IMAGE] Send failed:', error?.message || error);
             await sock.sendMessage(jid, { text: caption }, { quoted: m });
