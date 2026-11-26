@@ -5,7 +5,6 @@ const KEY = process.env.MOCHI_API_KEY || process.env.DNUZ_API_KEY || process.env
 const sessions = new Map();
 let flowSequence = 0;
 const TTL = 30 * 60 * 1000;
-const MAX_BULK_EPISODES = 20;
 const cancelledSeasons = new Set(); // session keys whose delivery was cancelled (P7)
 const clean = (v, n = 180) => String(v ?? '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#8217;|&#039;/g, "'").replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const bold = v => '*' + clean(v, 450) + '*';
@@ -416,7 +415,6 @@ function bulkQualityOptions(episodesWithOptions) {
 async function prepareSeason(c, session, seasonIndex) {
   const season = session.seasons?.[seasonIndex];
   if (!season) return say(c, '*❌ Season not found.*');
-  if (season.episodes.length > MAX_BULK_EPISODES) return say(c, '*⚠️ This season has ' + season.episodes.length + ' episodes. Bulk delivery is limited to ' + MAX_BULK_EPISODES + ' at once to avoid WhatsApp rate limits. Select episodes individually.*');
   await react(c, '📦');
   await say(c, '🔎 *Checking available qualities for Season ' + clean(season.season_no, 10) + '…*\n📺 Episodes: *' + season.episodes.length + '*');
   const episodeData = await mapLimit(season.episodes, 4, async episode => {
