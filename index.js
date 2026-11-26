@@ -130,36 +130,141 @@ for (const bin of [FFMPEG, FFPROBE]) {
 setBinaries({ ffmpeg: FFMPEG, ffprobe: FFPROBE });
 cleanCache();
 
-// ================= GLOBAL DINOSAUR STICKER REACTION =================
-// CC0 animated dinosaur WebP from VibeGIF (public-domain gallery).
-// Keep the source list here so more licensed dinosaur animations can be added later.
-const DINO_REACTION_STICKERS = [
-    'https://raw.githubusercontent.com/direct-img/vibegif.direct-img.link/main/public/dino/stomp.webp',
-];
-let dinoReactionStickerCache = new Map();
+// ================= GLOBAL ANIMATED STICKER REACTIONS =================
+// 32 original animated WebP reactions from Fah Swe Tools.
+// Free collection licence permits use in chats/social posts; source credit is appreciated.
+// Stickers are resized onto a 512x512 transparent canvas so the visible artwork is smaller.
+const REACTION_STICKERS = {
+    'mishu-thank-you': 'https://fahswetools.com/emoji3d/originals/mishu-thank-you.webp?v=de8ebb5129',
+    'mishu-sorry': 'https://fahswetools.com/emoji3d/originals/mishu-sorry.webp?v=2d685f7b12',
+    'mishu-angry': 'https://fahswetools.com/emoji3d/originals/mishu-angry.webp?v=caaa918063',
+    'mishu-shocked': 'https://fahswetools.com/emoji3d/originals/mishu-shocked.webp?v=4325e8ea4d',
+    'mishu-thinking': 'https://fahswetools.com/emoji3d/originals/mishu-thinking.webp?v=4403d3edb8',
+    'mishu-dance': 'https://fahswetools.com/emoji3d/originals/mishu-dance.webp?v=4acc7d49a5',
+    'mishu-cool': 'https://fahswetools.com/emoji3d/originals/mishu-cool.webp?v=10153f9ccd',
+    'mishu-shy': 'https://fahswetools.com/emoji3d/originals/mishu-shy.webp?v=6d5dc89e08',
+    'mishu-tea-time': 'https://fahswetools.com/emoji3d/originals/mishu-tea-time.webp?v=bf1404325a',
+    'mishu-yes-ok': 'https://fahswetools.com/emoji3d/originals/mishu-yes-ok.webp?v=8a611a4d06',
+    'mishu-low-battery': 'https://fahswetools.com/emoji3d/originals/mishu-low-battery.webp?v=76f84992b7',
+    'mishu-running-late': 'https://fahswetools.com/emoji3d/originals/mishu-running-late.webp?v=5cb11644c1',
+    'mishu-trophy': 'https://fahswetools.com/emoji3d/originals/mishu-trophy.webp?v=e2ae97e3c5',
+    'pakhi-hello': 'https://fahswetools.com/emoji3d/originals/pakhi-hello.webp?v=96b70e8ed0',
+    'pakhi-love-letter': 'https://fahswetools.com/emoji3d/originals/pakhi-love-letter.webp?v=99552a5a17',
+    'pakhi-bye': 'https://fahswetools.com/emoji3d/originals/pakhi-bye.webp?v=d5614ab858',
+    'pakhi-get-well': 'https://fahswetools.com/emoji3d/originals/pakhi-get-well.webp?v=7ae5f4ca90',
+    'pakhi-rainy-day': 'https://fahswetools.com/emoji3d/originals/pakhi-rainy-day.webp?v=340e282225',
+    'pakhi-cheer': 'https://fahswetools.com/emoji3d/originals/pakhi-cheer.webp?v=38a0694963',
+    'pakhi-singing': 'https://fahswetools.com/emoji3d/originals/pakhi-singing.webp?v=f779621a3a',
+    'pakhi-flying': 'https://fahswetools.com/emoji3d/originals/pakhi-flying.webp?v=f211f4706b',
+    'rumi-love-you': 'https://fahswetools.com/emoji3d/originals/rumi-love-you.webp?v=9b9791591a',
+    'rumi-shy-kiss': 'https://fahswetools.com/emoji3d/originals/rumi-shy-kiss.webp?v=53dc3046ef',
+    'rumi-thank-you': 'https://fahswetools.com/emoji3d/originals/rumi-thank-you.webp?v=9efdea444c',
+    'rumi-yay': 'https://fahswetools.com/emoji3d/originals/rumi-yay.webp?v=3ac71e85f9',
+    'rumi-birthday-horn': 'https://fahswetools.com/emoji3d/originals/rumi-birthday-horn.webp?v=8d01164e1b',
+    'pakhi-phone-call': 'https://fahswetools.com/emoji3d/originals/pakhi-phone-call.webp?v=c86d2d311e',
+    'pakhi-dance': 'https://fahswetools.com/emoji3d/originals/pakhi-dance.webp?v=567f37c33b',
+    'rumi-giggle': 'https://fahswetools.com/emoji3d/originals/rumi-giggle.webp?v=5e13a7262e',
+    'rumi-hop-dance': 'https://fahswetools.com/emoji3d/originals/rumi-hop-dance.webp?v=e12a2bcf65',
+    'pakhi-lol': 'https://fahswetools.com/emoji3d/originals/pakhi-lol.webp?v=8e5fd01c7b',
+    'mishu-kisses': 'https://fahswetools.com/emoji3d/originals/mishu-kisses.webp?v=96d24cd8e3',
+};
 
-async function getRandomDinoReactionSticker() {
-    const url = DINO_REACTION_STICKERS[crypto.randomInt(0, DINO_REACTION_STICKERS.length)];
-    if (dinoReactionStickerCache.has(url)) return dinoReactionStickerCache.get(url);
+const REACTION_GROUPS = {
+    search: ['mishu-thinking', 'mishu-shocked', 'mishu-tea-time'],
+    call: ['pakhi-phone-call', 'mishu-running-late', 'pakhi-hello'],
+    love: ['rumi-love-you', 'rumi-shy-kiss', 'mishu-kisses', 'pakhi-love-letter', 'mishu-shy'],
+    laugh: ['pakhi-lol', 'rumi-giggle', 'mishu-dance', 'pakhi-dance', 'rumi-hop-dance'],
+    success: ['mishu-yes-ok', 'mishu-trophy', 'pakhi-cheer', 'rumi-yay'],
+    sorry: ['mishu-sorry', 'pakhi-get-well', 'pakhi-rainy-day'],
+    thanks: ['mishu-thank-you', 'rumi-thank-you'],
+    greeting: ['pakhi-hello', 'pakhi-bye', 'pakhi-singing', 'pakhi-flying'],
+    general: Object.keys(REACTION_STICKERS),
+};
 
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error(`Dinosaur sticker download failed: HTTP ${response.status}`);
+const reactionStickerCache = new Map();
+const lastReactionStickerByChat = new Map();
 
-    const contentType = response.headers.get('content-type') || '';
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (!contentType.toLowerCase().includes('image/webp') ||
-        buffer.length < 16 ||
-        buffer.length > 500 * 1024 ||
-        buffer.toString('ascii', 0, 4) !== 'RIFF' ||
-        buffer.toString('ascii', 8, 12) !== 'WEBP') {
-        throw new Error('Downloaded dinosaur sticker is not a valid WhatsApp-sized WebP');
-    }
-
-    dinoReactionStickerCache.set(url, buffer);
-    return buffer;
+function getReactionGroup(commandName = '') {
+    const command = String(commandName || '').toLowerCase();
+    if (/(search|find|movie|cinesubz|modapk|modgame|oldgame|pinterest|download|yt|apk|game)/.test(command)) return 'search';
+    if (/(call|voip|dial|phone|vcall|acall)/.test(command)) return 'call';
+    if (/(love|heart|kiss|couple)/.test(command)) return 'love';
+    if (/(laugh|fun|joke|meme)/.test(command)) return 'laugh';
+    if (/(alive|hello|menu|greet|bye)/.test(command)) return 'greeting';
+    if (/(thanks|thank)/.test(command)) return 'thanks';
+    if (/(sorry|error|fail|invalid|wrong)/.test(command)) return 'sorry';
+    if (/(success|done|check|ping|info|status|owner|restart|privacy|mode)/.test(command)) return 'success';
+    return 'general';
 }
 
-async function sendStickerReaction(sock, jid, messageKey) {
+function chooseReactionSticker(jid, commandName) {
+    const group = getReactionGroup(commandName);
+    const pool = REACTION_GROUPS[group] || REACTION_GROUPS.general;
+    const previous = lastReactionStickerByChat.get(jid);
+    const available = pool.filter(id => id !== previous);
+    const selected = available[crypto.randomInt(0, available.length)] || pool[0];
+    lastReactionStickerByChat.set(jid, selected);
+    if (lastReactionStickerByChat.size > 1000) {
+        lastReactionStickerByChat.delete(lastReactionStickerByChat.keys().next().value);
+    }
+    return { id: selected, url: REACTION_STICKERS[selected] };
+}
+
+async function getReactionStickerBuffer(url) {
+    if (reactionStickerCache.has(url)) return reactionStickerCache.get(url);
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`Reaction sticker download failed: HTTP ${response.status}`);
+
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (contentType && !contentType.includes('image/webp')) {
+        throw new Error('Reaction sticker source did not return WebP');
+    }
+
+    const source = Buffer.from(await response.arrayBuffer());
+    if (source.length < 32 || source.length > 5 * 1024 * 1024 ||
+        source.toString('ascii', 0, 4) !== 'RIFF' ||
+        source.toString('ascii', 8, 12) !== 'WEBP' ||
+        source.indexOf('ANIM') < 0 || source.indexOf('ANMF') < 0) {
+        throw new Error('Reaction sticker is not a valid animated WebP');
+    }
+
+    const metadata = await sharp(source, { animated: true }).metadata();
+    if (metadata.format !== 'webp') throw new Error('Unsupported reaction sticker format');
+
+    // Keep the full WhatsApp canvas but shrink the visible art to ~70%.
+    const options = { quality: 78, effort: 5, loop: metadata.loop ?? 0 };
+    if (Array.isArray(metadata.delay)) options.delay = metadata.delay;
+
+    let sticker = await sharp(source, { animated: true })
+        .resize({ width: 360, height: 360, fit: 'inside', withoutEnlargement: true })
+        .extend({
+            top: 76, bottom: 76, left: 76, right: 76,
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .webp(options)
+        .toBuffer();
+
+    if (sticker.length > 500 * 1024) {
+        sticker = await sharp(source, { animated: true })
+            .resize({ width: 320, height: 320, fit: 'inside', withoutEnlargement: true })
+            .extend({
+                top: 96, bottom: 96, left: 96, right: 96,
+                background: { r: 0, g: 0, b: 0, alpha: 0 },
+            })
+            .webp({ quality: 65, effort: 6, loop: metadata.loop ?? 0 })
+            .toBuffer();
+    }
+    if (sticker.length > 500 * 1024) throw new Error('Optimized reaction sticker exceeds WhatsApp 500 KB limit');
+
+    reactionStickerCache.set(url, sticker);
+    if (reactionStickerCache.size > 32) {
+        reactionStickerCache.delete(reactionStickerCache.keys().next().value);
+    }
+    return sticker;
+}
+
+async function sendStickerReaction(sock, jid, messageKey, commandName = '') {
     try {
         if (!sock?.relayMessage || !jid || !messageKey) return false;
         if (typeof B.generateWAMessage !== 'function' ||
@@ -167,7 +272,8 @@ async function sendStickerReaction(sock, jid, messageKey) {
             throw new Error('This Baileys build does not expose the media upload/message generator required for sticker annotations');
         }
 
-        const stickerBuffer = await getRandomDinoReactionSticker();
+        const selected = chooseReactionSticker(jid, commandName);
+        const stickerBuffer = await getReactionStickerBuffer(selected.url);
         const generated = await B.generateWAMessage(
             jid,
             { sticker: stickerBuffer },
@@ -196,7 +302,7 @@ async function sendStickerReaction(sock, jid, messageKey) {
         });
         return true;
     } catch (error) {
-        console.log('[DINOSAUR STICKER REACTION]', error?.message || error);
+        console.log('[ANIMATED STICKER REACTION]', error?.message || error);
         return false;
     }
 }
@@ -1272,7 +1378,7 @@ async function handleCommand(sock, m) {
                     state: { plugins: PLUGIN_LIST, pluginCount: PLUGIN_LIST.length }
                 });
                 if (handled) {
-                    await sendStickerReaction(sock, jid, m.key);
+                    await sendStickerReaction(sock, jid, m.key, activePlugin.name);
                     return;
                 }
             } catch (error) {
@@ -1295,7 +1401,7 @@ async function handleCommand(sock, m) {
     if (!allowed) return;
 
     // Every recognized command uses the same sticker-reaction system.
-    await sendStickerReaction(sock, jid, m.key);
+    await sendStickerReaction(sock, jid, m.key, name);
 
     const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
 
