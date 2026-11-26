@@ -1346,14 +1346,6 @@ async function loadPlugins() {
 
 function extractCommandText(message) {
     const current = unwrapMessage(message);
-    let nativeFlowId = '';
-    const paramsJson = current.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
-    if (paramsJson) {
-        try {
-            const params = JSON.parse(paramsJson);
-            nativeFlowId = params.id || params.selectedId || params.row_id || '';
-        } catch {}
-    }
     return current.conversation ||
         current.extendedTextMessage?.text ||
         current.imageMessage?.caption ||
@@ -1362,7 +1354,6 @@ function extractCommandText(message) {
         current.buttonsResponseMessage?.selectedButtonId ||
         current.templateButtonReplyMessage?.selectedId ||
         current.listResponseMessage?.singleSelectReply?.selectedRowId ||
-        nativeFlowId ||
         '';
 }
 
@@ -1539,16 +1530,7 @@ async function handleCommand(sock, m) {
     }
 
     if (isMenu) {
-        await sock.sendMessage(jid, {
-            text: MENU_TEXT(),
-            footer: texts.footer,
-            nativeFlow: [
-                { text: '📞 Call Controls', id: `${prefix}menu calls` },
-                { text: '📚 Browse Commands', id: `${prefix}menu commands` },
-                { text: '📊 Bot Information', id: `${prefix}info` },
-                { text: '🟢 Alive Status', id: `${prefix}alive` },
-            ],
-        }, { quoted: m });
+        await sendMenuMedia(sock, jid, m, MENU_TEXT());
         return;
     }
 
