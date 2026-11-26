@@ -8,7 +8,7 @@ export default {
     desc: 'View bot and server information',
     ownerOnly: false,
 
-    async run({ reply, config, prefix, state, isOwner }) {
+    async run({ reply, sock, jid, m, config, prefix, state, isOwner }) {
         const mem = process.memoryUsage();
         const cpu = os.cpus()?.[0]?.model?.trim() || 'unknown';
         const serverSection = isOwner
@@ -33,6 +33,14 @@ export default {
 🔗 ${config.repoUrl || ''}
 
 ${config.texts.footer}`;
-        await reply(text);
+        await sock.sendMessage(jid, {
+            text,
+            footer: config.texts.footer,
+            nativeFlow: [
+                { text: '📋 Open Menu', id: `${prefix}menu` },
+                { text: '🟢 Alive', id: `${prefix}alive` },
+                { text: '📞 Call Controls', id: `${prefix}menu calls` },
+            ],
+        }, { quoted: m });
     },
 };
