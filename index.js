@@ -1141,7 +1141,7 @@ async function dialOut(kind, number, url) {
     return dialPrepared(kind, number, await resolveDialMedia(kind, url));
 }
 
-async function handleDial(sock, m, kind, rawArgs, reply) {
+async function handleDial(sock, m, jid, kind, rawArgs, reply) {
     const label = kind === 'video' ? 'Video' : 'Audio';
     const cmd = kind === 'video' ? 'vcall' : 'acall';
     const input = rawArgs.join(' ').trim();
@@ -1421,7 +1421,7 @@ async function handleCommand(sock, m) {
 
     if (isVcall || isAcall) {
         if (!isOwner) return reply(`${texts.ownerOnly}\n\n${texts.footer}`);
-        await handleDial(sock, m, isVcall ? 'video' : 'audio', rawArgs, reply);
+        await handleDial(sock, m, jid, isVcall ? 'video' : 'audio', rawArgs, reply);
         return;
     }
 
