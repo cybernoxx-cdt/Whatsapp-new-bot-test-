@@ -130,31 +130,73 @@ for (const bin of [FFMPEG, FFPROBE]) {
 setBinaries({ ffmpeg: FFMPEG, ffprobe: FFPROBE });
 cleanCache();
 
-// ================= GLOBAL STICKER REACTION =================
-// One shared reaction for commands and interactive plugin replies.
+// ================= GLOBAL DINOSAUR STICKER REACTION =================
+// CC0 animated dinosaur WebP from VibeGIF (public-domain gallery).
+// Keep the source list here so more licensed dinosaur animations can be added later.
+const DINO_REACTION_STICKERS = [
+    'https://raw.githubusercontent.com/direct-img/vibegif.direct-img.link/main/public/dino/stomp.webp',
+];
+let dinoReactionStickerCache = new Map();
+
+async function getRandomDinoReactionSticker() {
+    const url = DINO_REACTION_STICKERS[crypto.randomInt(0, DINO_REACTION_STICKERS.length)];
+    if (dinoReactionStickerCache.has(url)) return dinoReactionStickerCache.get(url);
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`Dinosaur sticker download failed: HTTP ${response.status}`);
+
+    const contentType = response.headers.get('content-type') || '';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!contentType.toLowerCase().includes('image/webp') ||
+        buffer.length < 16 ||
+        buffer.length > 500 * 1024 ||
+        buffer.toString('ascii', 0, 4) !== 'RIFF' ||
+        buffer.toString('ascii', 8, 12) !== 'WEBP') {
+        throw new Error('Downloaded dinosaur sticker is not a valid WhatsApp-sized WebP');
+    }
+
+    dinoReactionStickerCache.set(url, buffer);
+    return buffer;
+}
+
 async function sendStickerReaction(sock, jid, messageKey) {
     try {
         if (!sock?.relayMessage || !jid || !messageKey) return false;
-        await sock.relayMessage(jid, {
-            messageContextInfo: {
-                messageAssociation: {
-                    associationType: 11,
-                    parentMessageKey: messageKey,
-                },
+        if (typeof B.generateWAMessage !== 'function' ||
+            typeof sock.waUploadToServer !== 'function') {
+            throw new Error('This Baileys build does not expose the media upload/message generator required for sticker annotations');
+        }
+
+        const stickerBuffer = await getRandomDinoReactionSticker();
+        const generated = await B.generateWAMessage(
+            jid,
+            { sticker: stickerBuffer },
+            {
+                userJid: sock.user?.id,
+                upload: sock.waUploadToServer,
+                logger: sock.logger,
+                mediaCache: sock.mediaCache,
+            }
+        );
+
+        if (!generated?.message || !generated?.key?.id) {
+            throw new Error('Baileys did not generate the sticker message');
+        }
+
+        generated.message.messageContextInfo = {
+            ...(generated.message.messageContextInfo || {}),
+            messageAssociation: {
+                associationType: 11,
+                parentMessageKey: messageKey,
             },
-            stickerMessage: {
-                url: 'https://mmg.whatsapp.net/v/t62.15575-24/818766779_1129097639778153_6590267083545743956_n.enc?ccb=11-4&oh=01_Q5Aa5gHNe2HdbLE-cWkJXND2kbQ-dPCK_OUE8yMZftwYLe7BsQ&oe=6ADAC196&_nc_sid=5e03e0&mms3=true',
-                fileSha256: 'Uoa2mnXeustnlPHuKU4SBDRzKn/Tfi7Yn8zDAbYCnos=',
-                fileEncSha256: 'L2lSGKLAk7SXkVhBHuNwy2gyET1OhAcR8O7hTmFx0Ss=',
-                mediaKey: 'rsI+FYArjYdzSdlGH4R6G5OUviYNZmBrFvoAitAlI7U=',
-                mimetype: 'application/was',
-                directPath: '/v/t62.15575-24/818766779_1129097639778153_6590267083545743956_n.enc?ccb=11-4&oh=01_Q5Aa5gHNe2HdbLE-cWkJXND2kbQ-dPCK_OUE8yMZftwYLe7BsQ&oe=6ADAC196&_nc_sid=5e03e0',
-                isLottie: true,
-            },
-        }, {});
+        };
+
+        await sock.relayMessage(jid, generated.message, {
+            messageId: generated.key.id,
+        });
         return true;
     } catch (error) {
-        console.log('[STICKER REACTION]', error?.message || error);
+        console.log('[DINOSAUR STICKER REACTION]', error?.message || error);
         return false;
     }
 }
