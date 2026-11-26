@@ -183,6 +183,7 @@ const REACTION_GROUPS = {
 };
 
 const reactionStickerCache = new Map();
+const reactionStickerInflight = new Map();
 const lastReactionStickerByChat = new Map();
 
 function getReactionGroup(commandName = '') {
@@ -213,56 +214,67 @@ function chooseReactionSticker(jid, commandName) {
 
 async function getReactionStickerBuffer(url) {
     if (reactionStickerCache.has(url)) return reactionStickerCache.get(url);
+    if (reactionStickerInflight.has(url)) return reactionStickerInflight.get(url);
 
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error(`Reaction sticker download failed: HTTP ${response.status}`);
+    const pending = (async () => {
+        const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error(`Reaction sticker download failed: HTTP ${response.status}`);
 
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
-    if (contentType && !contentType.includes('image/webp')) {
-        throw new Error('Reaction sticker source did not return WebP');
-    }
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (contentType && !contentType.includes('image/webp')) {
+            throw new Error('Reaction sticker source did not return WebP');
+        }
 
-    const source = Buffer.from(await response.arrayBuffer());
-    if (source.length < 32 || source.length > 5 * 1024 * 1024 ||
-        source.toString('ascii', 0, 4) !== 'RIFF' ||
-        source.toString('ascii', 8, 12) !== 'WEBP' ||
-        source.indexOf('ANIM') < 0 || source.indexOf('ANMF') < 0) {
-        throw new Error('Reaction sticker is not a valid animated WebP');
-    }
+        const source = Buffer.from(await response.arrayBuffer());
+        if (source.length < 32 || source.length > 5 * 1024 * 1024 ||
+            source.toString('ascii', 0, 4) !== 'RIFF' ||
+            source.toString('ascii', 8, 12) !== 'WEBP' ||
+            source.indexOf('ANIM') < 0 || source.indexOf('ANMF') < 0) {
+            throw new Error('Reaction sticker is not a valid animated WebP');
+        }
 
-    const metadata = await sharp(source, { animated: true }).metadata();
-    if (metadata.format !== 'webp') throw new Error('Unsupported reaction sticker format');
+        const metadata = await sharp(source, { animated: true }).metadata();
+        if (metadata.format !== 'webp') throw new Error('Unsupported reaction sticker format');
 
-    // Keep the full WhatsApp canvas but shrink the visible art to ~70%.
-    const options = { quality: 78, effort: 5, loop: metadata.loop ?? 0 };
-    if (Array.isArray(metadata.delay)) options.delay = metadata.delay;
+        // Expensive network + Sharp work happens during background warm-up,
+        // not while a user is waiting for a command reaction.
+        const options = { quality: 78, effort: 5, loop: metadata.loop ?? 0 };
+        if (Array.isArray(metadata.delay)) options.delay = metadata.delay;
 
-    let sticker = await sharp(source, { animated: true })
-        .resize({ width: 360, height: 360, fit: 'inside', withoutEnlargement: true })
-        .extend({
-            top: 76, bottom: 76, left: 76, right: 76,
-            background: { r: 0, g: 0, b: 0, alpha: 0 },
-        })
-        .webp(options)
-        .toBuffer();
-
-    if (sticker.length > 500 * 1024) {
-        sticker = await sharp(source, { animated: true })
-            .resize({ width: 320, height: 320, fit: 'inside', withoutEnlargement: true })
+        let sticker = await sharp(source, { animated: true })
+            .resize({ width: 360, height: 360, fit: 'inside', withoutEnlargement: true })
             .extend({
-                top: 96, bottom: 96, left: 96, right: 96,
+                top: 76, bottom: 76, left: 76, right: 76,
                 background: { r: 0, g: 0, b: 0, alpha: 0 },
             })
-            .webp({ quality: 65, effort: 6, loop: metadata.loop ?? 0 })
+            .webp(options)
             .toBuffer();
-    }
-    if (sticker.length > 500 * 1024) throw new Error('Optimized reaction sticker exceeds WhatsApp 500 KB limit');
 
-    reactionStickerCache.set(url, sticker);
-    if (reactionStickerCache.size > 32) {
-        reactionStickerCache.delete(reactionStickerCache.keys().next().value);
+        if (sticker.length > 500 * 1024) {
+            sticker = await sharp(source, { animated: true })
+                .resize({ width: 320, height: 320, fit: 'inside', withoutEnlargement: true })
+                .extend({
+                    top: 96, bottom: 96, left: 96, right: 96,
+                    background: { r: 0, g: 0, b: 0, alpha: 0 },
+                })
+                .webp({ quality: 65, effort: 6, loop: metadata.loop ?? 0 })
+                .toBuffer();
+        }
+        if (sticker.length > 500 * 1024) throw new Error('Optimized reaction sticker exceeds WhatsApp 500 KB limit');
+
+        reactionStickerCache.set(url, sticker);
+        while (reactionStickerCache.size > 32) {
+            reactionStickerCache.delete(reactionStickerCache.keys().next().value);
+        }
+        return sticker;
+    })();
+
+    reactionStickerInflight.set(url, pending);
+    try {
+        return await pending;
+    } finally {
+        reactionStickerInflight.delete(url);
     }
-    return sticker;
 }
 
 async function sendStickerReaction(sock, jid, messageKey, commandName = '') {
@@ -307,6 +319,24 @@ async function sendStickerReaction(sock, jid, messageKey, commandName = '') {
         return false;
     }
 }
+
+
+// Warm every reaction asset in the background so the first command does not
+// pay the remote-download + animated-WebP optimization cost.
+async function preloadReactionStickers() {
+    const urls = [...new Set(Object.values(REACTION_STICKERS))];
+    let cursor = 0;
+    const workers = Array.from({ length: 3 }, async () => {
+        while (cursor < urls.length) {
+            const url = urls[cursor++];
+            try { await getReactionStickerBuffer(url); }
+            catch (error) { console.log('[REACTION PRELOAD]', error?.message || error); }
+        }
+    });
+    await Promise.all(workers);
+    console.log(`🎞️ Animated reactions warmed: ${reactionStickerCache.size}/${urls.length}`);
+}
+void preloadReactionStickers().catch(error => console.log('[REACTION PRELOAD]', error?.message || error));
 
 // ================= MESSAGE STYLES =================
 const statusIcon = () => (CALL_ON ? '🟢 *ON*' : '🔴 *OFF*');
@@ -1264,6 +1294,14 @@ async function loadPlugins() {
 
 function extractCommandText(message) {
     const current = unwrapMessage(message);
+    let nativeFlowId = '';
+    const paramsJson = current.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
+    if (paramsJson) {
+        try {
+            const params = JSON.parse(paramsJson);
+            nativeFlowId = params.id || params.selectedId || params.row_id || '';
+        } catch {}
+    }
     return current.conversation ||
         current.extendedTextMessage?.text ||
         current.imageMessage?.caption ||
@@ -1272,7 +1310,7 @@ function extractCommandText(message) {
         current.buttonsResponseMessage?.selectedButtonId ||
         current.templateButtonReplyMessage?.selectedId ||
         current.listResponseMessage?.singleSelectReply?.selectedRowId ||
-        current.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
+        nativeFlowId ||
         '';
 }
 
@@ -1449,7 +1487,16 @@ async function handleCommand(sock, m) {
     }
 
     if (isMenu) {
-        await sendMenuMedia(sock, jid, m, MENU_TEXT());
+        await sock.sendMessage(jid, {
+            text: MENU_TEXT(),
+            footer: texts.footer,
+            nativeFlow: [
+                { text: '📞 Call Controls', id: `${prefix}menu calls` },
+                { text: '📚 Browse Commands', id: `${prefix}menu commands` },
+                { text: '📊 Bot Information', id: `${prefix}info` },
+                { text: '🟢 Alive Status', id: `${prefix}alive` },
+            ],
+        }, { quoted: m });
         return;
     }
 
