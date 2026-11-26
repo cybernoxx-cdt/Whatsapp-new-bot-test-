@@ -1118,10 +1118,36 @@ async function resolveDialMedia(kind, url) {
     return prepared;
 }
 
+async function startOutgoingVideoTrack(voip, call, prepared) {
+    const callId = call?.callId ?? call?.id;
+    if (!callId || prepared.kind !== 'video') return;
+    let started = false;
+    const start = async () => {
+        if (started || endedCalls.has(callId)) return;
+        started = true;
+        try {
+            // voip.call() handles call setup/audio; the coordinator video track
+            // must be explicitly loaded for the remote peer to receive pictures.
+            await voip.coordinator.loadVideo(callId, prepared.file);
+            console.log('🎥 [MANUAL VIDEO] coordinator.loadVideo started:', callId, prepared.file);
+        } catch (error) {
+            console.error('❌ [MANUAL VIDEO] loadVideo failed:', error?.stack || error);
+            try { await call.hangup(); } catch {}
+        }
+    };
+    call.on('connected', () => { void start(); });
+    // Some builds may emit connected before listeners are attached.
+    const state = String(call.state || call.status || '').toLowerCase();
+    if (/connected|active|answered|in.?call/.test(state)) void start();
+}
+
 async function dialPrepared(kind, number, prepared) {
     await waitForVoip();
     console.log(`📞 Starting outgoing ${kind} call to ${number}`);
     const voip = VOIP;
+    if (kind === 'video' && prepared.kind !== 'video') {
+        throw new Error('Video call requires an MP4 video file; media conversion did not produce video.');
+    }
     const call = await queueVoipDial(voip, number, prepared.file, prepared.kind);
     const callId = call?.callId ?? call?.id;
     console.log('📡 VOIP.call returned:', callId || 'no callId', '| target:', call?.target || number);
@@ -1131,6 +1157,7 @@ async function dialPrepared(kind, number, prepared) {
     call.on('connected', () => console.log(`✅ ${kind} call connected:`, callId));
     call.on('ended', reason => console.log(`📴 ${kind} call ended:`, reason || ''));
     call.on('error', error => console.error(`❌ ${kind} call error:`, error?.message || error));
+    if (kind === 'video') await startOutgoingVideoTrack(voip, call, prepared);
     await armAutoHangup(call, prepared.file, `manual ${kind} ${callId}`);
     return call;
 }
