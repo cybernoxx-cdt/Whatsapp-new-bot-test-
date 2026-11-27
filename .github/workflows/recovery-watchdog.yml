@@ -1,0 +1,49 @@
+name: GOD VOIP MD Recovery Watchdog
+
+on:
+  workflow_run:
+    workflows: ["GOD VOIP MD"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  recover-long-run:
+    if: >-
+      ${{ github.event.workflow_run.head_branch == 'main' &&
+          (github.event.workflow_run.conclusion == 'cancelled' ||
+           github.event.workflow_run.conclusion == 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restart bot workflow after runner timeout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+          FINISHED_AT: ${{ github.event.workflow_run.updated_at }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          elapsed_seconds=$(python3 - <<'PY'
+          from datetime import datetime
+          import os
+          start = datetime.fromisoformat(os.environ["STARTED_AT"].replace("Z", "+00:00"))
+          end = datetime.fromisoformat(os.environ["FINISHED_AT"].replace("Z", "+00:00"))
+          print(max(0, int((end - start).total_seconds())))
+          PY
+          )
+          echo "Previous bot run $RUN_ID ended as $CONCLUSION after $((elapsed_seconds / 60)) minutes."
+
+          # Short cancellations are normally deployments or scheduled runner
+          # replacement. Only recover long-lived runs near the Actions limit.
+          if [ "$elapsed_seconds" -lt 20400 ]; then
+            echo "Short run cancellation; no automatic redispatch needed."
+            exit 0
+          fi
+
+          echo "Long-running bot runner stopped. Dispatching a fresh main workflow..."
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/run-bot.yml/dispatches" \
+            -f ref=main
+          echo "Recovery workflow dispatched."
