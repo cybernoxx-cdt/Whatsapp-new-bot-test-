@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  # Start a fresh runner every four hours. The concurrency group below
-  # cancels the previous runner so only one WhatsApp session is active.
+  # Start a replacement runner every five hours. GitHub-hosted runners have
+  # a hard job lifetime limit; the watchdog workflow recovers timed-out runs.
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "0 */5 * * *"
 
 # Prevent two runners from using the same WhatsApp session simultaneously.
 concurrency:
@@ -31,8 +31,20 @@ jobs:
           node-version: "22"
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies (retry transient registry failures)
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci --no-audit --no-fund; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::npm ci failed after 3 attempts"
+              exit 1
+            fi
+            delay=$((attempt * 15))
+            echo "npm ci failed; retrying in ${delay}s..."
+            sleep "$delay"
+          done
 
       - name: Validate source syntax and security module
         run: |
