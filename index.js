@@ -76,6 +76,9 @@ console.debug = (...args) => safeLog('log', args);
 console.warn = (...args) => safeLog('warn', args);
 console.error = (...args) => safeLog('error', args);
 
+// Parent supervisor watchdog: proves the worker event loop is still responsive.
+setInterval(() => console.log('BOT_HEARTBEAT'), 30000).unref();
+
 // ================= SETTINGS =================
 const { prefix, texts } = config;
 // Concurrent call limit: CALL_LIMIT env > config.voip.maxConcurrentCalls (default 10, hard cap 50)
