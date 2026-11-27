@@ -1570,7 +1570,7 @@ async function handleCommand(sock, m) {
         const elapsed = Math.round(performance.now() - startedAt);
         if (elapsed >= 500) {
             const body = extractCommandText(m?.message);
-            const label = String(body || '').trim().split(/\\s+/)[0] || 'message';
+            const label = String(body || '').trim().split(/\s+/)[0] || 'message';
             console.log(`[CMD PERF] ${label} completed in ${elapsed}ms`);
         }
     }
