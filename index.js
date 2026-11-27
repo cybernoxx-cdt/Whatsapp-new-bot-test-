@@ -251,7 +251,7 @@ async function getReactionStickerBuffer(url) {
                 top: 76, bottom: 76, left: 76, right: 76,
                 background: { r: 0, g: 0, b: 0, alpha: 0 },
             })
-            .webp(options)
+            .webp({ ...options, effort: 3 })
             .toBuffer();
 
         if (sticker.length > 500 * 1024) {
@@ -261,7 +261,7 @@ async function getReactionStickerBuffer(url) {
                     top: 96, bottom: 96, left: 96, right: 96,
                     background: { r: 0, g: 0, b: 0, alpha: 0 },
                 })
-                .webp({ quality: 65, effort: 6, loop: metadata.loop ?? 0 })
+                .webp({ quality: 62, effort: 3, loop: metadata.loop ?? 0 })
                 .toBuffer();
         }
         if (sticker.length > 500 * 1024) throw new Error('Optimized reaction sticker exceeds WhatsApp 500 KB limit');
@@ -381,7 +381,7 @@ async function sendStickerReaction(sock, jid, messageKey, commandName = '') {
 async function preloadReactionStickers() {
     const urls = [...new Set(Object.values(REACTION_STICKERS))];
     let cursor = 0;
-    const workers = Array.from({ length: 3 }, async () => {
+    const workers = Array.from({ length: 1 }, async () => {
         while (cursor < urls.length) {
             const url = urls[cursor++];
             try { await getReactionStickerBuffer(url); }
@@ -1317,6 +1317,7 @@ ${texts.footer}`);
 // Every file in ./plugins (not starting with "_") is loaded as a command.
 const PLUGINS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'plugins');
 const PLUGIN_LIST = [];
+const REPLY_PLUGIN_LIST = []; // only plugins that handle numeric / conversational replies
 const PLUGIN_MAP = new Map(); // name / alias -> plugin
 
 async function loadPlugins() {
@@ -1337,6 +1338,7 @@ async function loadPlugins() {
                 PLUGIN_MAP.set(n, p);
             }
             PLUGIN_LIST.push(p);
+            if (typeof p.onMessage === 'function') REPLY_PLUGIN_LIST.push(p);
         } catch (e) {
             console.log(`❌ plugin load error (${f}):`, e.message);
         }
@@ -1392,7 +1394,7 @@ function cacheMessage(m) {
 }
 const getCachedMessage = (id) => (id ? MSG_CACHE.get(id) || null : null);
 
-async function handleCommand(sock, m) {
+async function executeCommand(sock, m) {
     const body = extractCommandText(m.message);
     const trimmed = String(body || '').trim();
     const jid = m.key.remoteJid;
@@ -1456,8 +1458,7 @@ async function handleCommand(sock, m) {
         // Route plain-text selections to every plugin that owns an active
         // conversation (CineSubz, Mod APK, Mod Games, Old PC Games, etc.).
         const reply = (t) => sock.sendMessage(jid, { text: t }, { quoted: m });
-        for (const activePlugin of PLUGIN_LIST) {
-            if (typeof activePlugin.onMessage !== 'function') continue;
+        for (const activePlugin of REPLY_PLUGIN_LIST) {
             try {
                 const handled = await activePlugin.onMessage({
                     sock, m, jid, config, prefix, reply, text: trimmed,
@@ -1560,6 +1561,21 @@ async function handleCommand(sock, m) {
     }
 }
 
+// Instrument command duration without blocking the WhatsApp event listener.
+async function handleCommand(sock, m) {
+    const startedAt = performance.now();
+    try {
+        await executeCommand(sock, m);
+    } finally {
+        const elapsed = Math.round(performance.now() - startedAt);
+        if (elapsed >= 500) {
+            const body = extractCommandText(m?.message);
+            const label = String(body || '').trim().split(/\\s+/)[0] || 'message';
+            console.log(`[CMD PERF] ${label} completed in ${elapsed}ms`);
+        }
+    }
+}
+
 // ================= WEB SERVER (health check only) =================
 function startServer() {
     if (process.env.DISABLE_SERVER === 'true') return;
@@ -1632,15 +1648,31 @@ async function start() {
         debouncedSave();
     });
 
-    sock.ev.on('messages.upsert', async ({ messages }) => {
+    // Deduplicate event replays and never await slow plugins / media APIs
+    // inside Baileys' messages.upsert event. One slow command must not block
+    // other commands or numeric replies arriving on the same socket.
+    const recentlyDispatched = new Map();
+    sock.ev.on('messages.upsert', ({ messages }) => {
         for (const m of messages || []) {
             if (!m?.message || m.key?.remoteJid === 'status@broadcast') continue;
             cacheMessage(m);
-            try {
-                await handleCommand(sock, m);
-            } catch (e) {
-                console.log('cmd error:', e.message);
+
+            const messageId = m.key?.id;
+            if (messageId) {
+                if (recentlyDispatched.has(messageId)) continue;
+                recentlyDispatched.set(messageId, Date.now());
+                if (recentlyDispatched.size > 2000) {
+                    const cutoff = Date.now() - 120000;
+                    for (const [id, at] of recentlyDispatched) {
+                        if (at < cutoff || recentlyDispatched.size > 1500) recentlyDispatched.delete(id);
+                        else break;
+                    }
+                }
             }
+
+            void handleCommand(sock, m).catch(error => {
+                console.log('cmd error:', error?.message || error);
+            });
         }
     });
 
