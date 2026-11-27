@@ -62,6 +62,19 @@ const status = new Map(sessions.map(s => [s.index, 'starting']));
 const restartCounts = new Map(sessions.map(s => [s.index, 0]));
 const terminalReason = new Map();
 const startedAt = new Map();
+const lastHeartbeat = new Map();
+const workerWatchdog = setInterval(() => {
+    const now = Date.now();
+    for (const [index, child] of children) {
+        const last = lastHeartbeat.get(index) || startedAt.get(index) || now;
+        if (now - last > 150000 && child.exitCode === null && child.signalCode === null) {
+            logSession(index, '🚨 Worker heartbeat missing for 150s; killing hung worker so it can restart.');
+            child.kill('SIGKILL');
+            lastHeartbeat.set(index, now);
+        }
+    }
+}, 30000);
+workerWatchdog.unref();
 let shuttingDown = false;
 
 function logSession(index, message) {
@@ -90,6 +103,7 @@ function launch(session) {
     const child = spawn(process.execPath, ['index.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     children.set(session.index, child);
     startedAt.set(session.index, Date.now());
+    lastHeartbeat.set(session.index, Date.now());
     status.set(session.index, 'starting');
 
     let stdoutBuffer = '';
@@ -105,6 +119,10 @@ function launch(session) {
         else stdoutBuffer = buffer;
         for (const line of lines) {
             if (!line.trim()) continue;
+            if (line.includes('BOT_HEARTBEAT')) {
+                lastHeartbeat.set(session.index, Date.now());
+                continue;
+            }
             if (/Logged out|loggedOut|statusCode.?401|configured session is invalid|No usable auth session found|registered=false/i.test(line)) {
                 authBlocked = true;
                 authReason = /Logged out|loggedOut|statusCode.?401/i.test(line) ? 'WhatsApp logged this device out' : 'Session credentials are invalid or unavailable';
@@ -124,6 +142,7 @@ function launch(session) {
     child.on('error', error => logSession(session.index, `Worker process error: ${error.message}`));
     child.on('exit', (code, signal) => {
         children.delete(session.index);
+        lastHeartbeat.delete(session.index);
         status.set(session.index, 'stopped');
         if (shuttingDown) return;
         if (authBlocked) {
@@ -155,6 +174,7 @@ function shutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(statusTimer);
+    clearInterval(workerWatchdog);
     console.log(`🛑 Multi-session manager received ${signal}; stopping all workers...`);
     for (const child of children.values()) child.kill(signal);
     setTimeout(() => process.exit(0), 8000).unref();
